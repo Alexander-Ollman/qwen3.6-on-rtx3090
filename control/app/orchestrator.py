@@ -86,7 +86,24 @@ class Orchestrator:
     async def switch_to(self, profile_name: str, *, reason: str = "user request") -> None:
         if profile_name not in self.config.profiles:
             raise ValueError(f"unknown profile: {profile_name}")
-        # Background task — switch is long; lock prevents overlapping switches.
+        prof = self.config.profiles[profile_name]
+        # Flip to SWITCHING synchronously, BEFORE creating the background task,
+        # so the proxy starts returning 503 before any container stop happens.
+        # Without this, a concurrent /v1/* request that arrives between the
+        # api_switch handler returning and the task actually running would see
+        # state=ACTIVE and try to forward to the upstream that's about to die.
+        prev = self.state.active_profile or self.state.status.value
+        self.state = State(
+            status=Status.SWITCHING,
+            active_profile=None,
+            progress=SwitchProgress(
+                target=profile_name,
+                started_at=time.time(),
+                expected_seconds=prof.expected_load_seconds,
+                current_step="Queued",
+            ),
+        )
+        db.log_transition(prev, f"switching:{profile_name}", reason)
         asyncio.create_task(self._switch_locked(profile_name, reason))
 
     async def _switch_locked(self, profile_name: str, reason: str) -> None:
@@ -110,16 +127,10 @@ class Orchestrator:
 
     async def _switch_inner(self, profile_name: str, reason: str) -> None:
         prof = self.config.profiles[profile_name]
-        prev = self.state.active_profile or self.state.status.value
-        log.info("switching from %s → %s (reason=%s)", prev, profile_name, reason)
-
-        progress = SwitchProgress(
-            target=profile_name,
-            started_at=time.time(),
-            expected_seconds=prof.expected_load_seconds,
-        )
-        self.state = State(status=Status.SWITCHING, active_profile=None, progress=progress)
-        db.log_transition(prev, f"switching:{profile_name}", reason)
+        # State is already SWITCHING (set synchronously by switch_to). Reuse
+        # its progress object so the "Queued" step shows up in the log_tail.
+        progress = self.state.progress
+        log.info("switching → %s (reason=%s)", profile_name, reason)
 
         try:
             # 1. Stop everything belonging to ANY profile (drain).
