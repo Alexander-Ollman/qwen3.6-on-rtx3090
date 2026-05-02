@@ -77,26 +77,32 @@ async def stop_and_remove(names: Iterable[str], stop_timeout: int = 20) -> list[
 async def gpu_memory_used_mib() -> list[tuple[int, int]]:
     """Return [(gpu_index, used_mib), ...] for each visible GPU.
 
-    Uses nvidia-smi from the host (inside the container if `docker.io`
-    package was installed). Works because the qwen-control image installs
-    docker.io which depends on… nothing useful for nvidia-smi. Fall back
-    to running nvidia-smi via `docker run --rm --gpus all` if it's not
-    available locally.
+    Best-effort. The control container doesn't have GPUs attached, so we go
+    via the docker socket to ask the daemon to run nvidia-smi for us.
+    Returns [] on any failure — GPU readout is informational, not critical.
     """
-    if shutil.which("nvidia-smi"):
-        cmd = ["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"]
+    nv = shutil.which("nvidia-smi")
+    if nv:
+        cmd = [nv, "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"]
     else:
-        # docker.sock is mounted; we can ask the daemon for the info.
+        docker_bin = shutil.which("docker")
+        if not docker_bin:
+            return []
         cmd = [
-            "docker", "run", "--rm", "--gpus", "all",
+            docker_bin, "run", "--rm", "--gpus", "all",
             "nvidia/cuda:12.8.0-base-ubuntu22.04",
             "nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits",
         ]
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-    out, _ = await proc.communicate()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+    except (FileNotFoundError, asyncio.TimeoutError, OSError) as e:
+        log.debug("gpu memory readout failed: %s", e)
+        return []
+
     if proc.returncode != 0:
         return []
 

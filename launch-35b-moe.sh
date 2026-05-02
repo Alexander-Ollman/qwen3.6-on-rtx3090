@@ -14,7 +14,12 @@ set -e
 STACK=/home/ver/qwen3.6/overnight-stack
 NIGHTLY_TAG=nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
 MODEL_CACHE=/home/ver/.cache/huggingface/hub/models--QuantTrio--Qwen3.6-35B-A3B-AWQ
-SNAP_REL=$(ls "$MODEL_CACHE/snapshots/" | head -1)
+# Hardcoded snapshot SHA. The dynamic `ls` lookup we previously had only
+# worked when the launcher ran on the host — inside the qwen-control
+# container /home/ver/.cache isn't mounted, so the lookup returned empty.
+# Note: this is the bare SHA (no "snapshots/" prefix); the path below
+# already prefixes "/model/snapshots/".
+SNAP_REL="119886a1072372348f73ef0df2d801cdcc0f455b"
 
 docker rm -f qwen36-moe 2>/dev/null || true
 

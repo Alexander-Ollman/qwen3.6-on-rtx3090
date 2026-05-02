@@ -16,3 +16,4 @@ __pycache__/
 # Editor
 .vscode/
 .idea/
+control/.env

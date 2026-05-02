@@ -1,9 +1,19 @@
 FROM python:3.12-slim
 
-# docker CLI for falling back from python SDK if the host socket version mismatches
+# Static docker CLI (the launcher scripts use `docker run`, so we need the
+# client binary in the container). The `docker.io` Debian package ships
+# dockerd but NOT the docker CLI — that's `docker-cli` upstream. Use the
+# official static build instead; it's a single file and version-pinned.
+ARG DOCKER_CLI_VERSION=27.5.1
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates docker.io \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" \
+      -o /tmp/docker.tgz \
+ && tar -xzf /tmp/docker.tgz -C /tmp \
+ && install -m 0755 /tmp/docker/docker /usr/local/bin/docker \
+ && rm -rf /tmp/docker /tmp/docker.tgz \
+ && rm -rf /var/lib/apt/lists/* \
+ && docker --version
 
 WORKDIR /srv
 

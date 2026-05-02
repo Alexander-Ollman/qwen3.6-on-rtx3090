@@ -39,9 +39,13 @@ require docker
 require openssl
 
 echo "[install] state dir: $STATE_DIR"
+# When run with sudo, `id -u` returns root's UID. Honor SUDO_UID/GID so the
+# state dir + files are owned by the invoking user, not root.
+TARGET_UID="${SUDO_UID:-$(id -u)}"
+TARGET_GID="${SUDO_GID:-$(id -g)}"
 sudo mkdir -p "$STATE_DIR"
-sudo chown "$(id -u):$(id -g)" "$STATE_DIR"
-chmod 750 "$STATE_DIR"
+sudo chown -R "$TARGET_UID:$TARGET_GID" "$STATE_DIR"
+sudo chmod 750 "$STATE_DIR"
 
 # --- API token -------------------------------------------------------------
 TOKEN_FILE="$STATE_DIR/api_token"
