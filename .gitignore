@@ -1,0 +1,18 @@
+# Local serving artifacts
+.cache/
+*.log
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (in case anyone adds notebooks/scripts later)
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Editor
+.vscode/
+.idea/

@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>From 25 to 283 tok/s: Serving Qwen3.6 on Dual RTX 3090s</title>
+<style>
+  :root {
+    --bg: #0d0f13;
+    --bg-elev: #14171c;
+    --bg-code: #0a0c0f;
+    --fg: #e7e9ec;
+    --fg-dim: #9aa0a8;
+    --fg-mute: #6b7180;
+    --accent: #4ea1ff;
+    --good: #4ade80;
+    --warn: #f59e0b;
+    --bad: #f87171;
+    --rule: #1f242c;
+    --table-stripe: #14171c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.65;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  main {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 56px 32px 96px;
+  }
+  h1 {
+    font-size: 2.1em;
+    line-height: 1.2;
+    margin: 0 0 0.4em;
+    letter-spacing: -0.01em;
+  }
+  h2 {
+    font-size: 1.5em;
+    margin: 2.2em 0 0.6em;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 0.3em;
+    letter-spacing: -0.005em;
+  }
+  h3 {
+    font-size: 1.15em;
+    margin: 1.8em 0 0.5em;
+    color: var(--fg);
+  }
+  p { margin: 0.7em 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .lede {
+    font-size: 1.08em;
+    color: var(--fg-dim);
+    margin: 0.6em 0 1.4em;
+  }
+  .tldr {
+    background: var(--bg-elev);
+    border-left: 3px solid var(--accent);
+    padding: 14px 18px;
+    margin: 1.4em 0 2em;
+    border-radius: 4px;
+    color: var(--fg-dim);
+  }
+  .tldr strong { color: var(--fg); }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0 1.5em;
+    font-size: 0.92em;
+  }
+  th, td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--rule);
+    text-align: left;
+  }
+  th {
+    color: var(--fg-dim);
+    font-weight: 600;
+    font-size: 0.86em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  tr:nth-child(even) td { background: var(--table-stripe); }
+  td.right, th.right { text-align: right; }
+  td.peak { color: var(--good); font-weight: 600; }
+  pre {
+    background: var(--bg-code);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.85em;
+    line-height: 1.55;
+    color: #d6d9de;
+  }
+  code {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.88em;
+    background: var(--bg-elev);
+    color: var(--accent);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+  }
+  /* Naive syntax color tokens — keyword/string/comment classes */
+  .kw { color: #c084fc; }
+  .str { color: #86efac; }
+  .com { color: var(--fg-mute); font-style: italic; }
+  .num { color: #fde047; }
+  .fn { color: #93c5fd; }
+  blockquote {
+    border-left: 3px solid var(--rule);
+    padding: 0.4em 1em;
+    margin: 1em 0;
+    color: var(--fg-dim);
+  }
+  ol, ul { padding-left: 1.4em; }
+  li { margin: 0.3em 0; }
+  figure {
+    margin: 2em 0;
+    text-align: center;
+  }
+  figure svg { max-width: 100%; height: auto; }
+  figcaption {
+    font-size: 0.86em;
+    color: var(--fg-mute);
+    margin-top: 0.6em;
+    text-align: center;
+  }
+  .hardware {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 6px 18px;
+    background: var(--bg-elev);
+    padding: 16px 20px;
+    border-radius: 6px;
+    margin: 1.5em 0;
+    font-size: 0.95em;
+  }
+  .hardware dt { color: var(--fg-dim); font-weight: 500; }
+  .hardware dd { margin: 0; }
+  .arch-diagram {
+    background: var(--bg-elev);
+    border-radius: 6px;
+    padding: 28px 24px;
+    margin: 1.5em 0;
+    overflow-x: auto;
+  }
+  .arch-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    flex-wrap: nowrap;
+    min-width: 720px;
+  }
+  .arch-box {
+    background: var(--bg-code);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 12px 16px;
+    text-align: center;
+    min-width: 130px;
+  }
+  .arch-box .role { font-size: 0.78em; color: var(--fg-mute); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+  .arch-box .name { color: var(--fg); font-weight: 600; font-size: 0.95em; }
+  .arch-box .meta { color: var(--fg-dim); font-size: 0.8em; margin-top: 4px; }
+  .arch-box.lb { border-color: var(--accent); }
+  .arch-box.lb .name { color: var(--accent); }
+  .arch-box.replica { border-color: var(--good); }
+  .arch-box.replica .name { color: var(--good); }
+  .arch-arrow {
+    color: var(--fg-mute);
+    font-size: 1.3em;
+    user-select: none;
+  }
+  .arch-fan {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .stage-jump {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin: 0.6em 0 1em;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.85em;
+    color: var(--fg-dim);
+  }
+  .stage-jump .from { color: var(--fg-mute); }
+  .stage-jump .arrow { color: var(--fg-mute); }
+  .stage-jump .to { color: var(--good); font-weight: 600; }
+  .footer {
+    margin-top: 3em;
+    padding-top: 1.5em;
+    border-top: 1px solid var(--rule);
+    color: var(--fg-mute);
+    font-size: 0.86em;
+  }
+  /* keyboard-style for env vars */
+  kbd {
+    background: var(--bg-code);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.85em;
+    color: #fde047;
+  }
+</style>
+</head>
+<body>
+<main>
+
+<h1>From 25 to 283 tok/s: Serving Qwen3.6 on Dual RTX 3090s</h1>
+<p class="lede">A full-stack tour of two single-endpoint optimization rounds on the same hardware — first the <strong>27B dense</strong> (9× over baseline, 225 tok/s aggregate), then the <strong>35B-A3B MoE</strong> (peak 283 tok/s aggregate, with completely different bottlenecks).</p>
+
+<div class="tldr">
+<strong>TL;DR.</strong> On dual RTX 3090s we built two production stacks and benchmarked both:<br/>
+<strong>Round 1 — Qwen3.6-27B (dense)</strong>: from 25 → 100 tok/s single-stream / 225 tok/s aggregate at C=4 via 2 replicas behind nginx, MTP <em>n</em>=5 speculative decoding, Sandermage's Genesis patches.<br/>
+<strong>Round 2 — Qwen3.6-35B-A3B (MoE)</strong>: 283 tok/s aggregate at C=4 via TP=2 + expert-parallel — <em>no</em> speculative decoding (it regresses on this MoE), and the model is too big for the 2-replica LB pattern. The MoE's sparse 3B-active design hits the same per-stream ceiling as the dense 27B's MTP=5 peak by a totally different mechanism.
+</div>
+
+<h2>The hardware</h2>
+<dl class="hardware">
+  <dt>GPUs</dt><dd>2× NVIDIA RTX 3090 (24 GB each, 48 GB total, Ampere SM 8.6)</dd>
+  <dt>Host</dt><dd>Ubuntu 22.04.5 LTS, kernel 6.8.0 (HWE), Secure Boot disabled</dd>
+  <dt>Driver (start)</dt><dd>570.172.08 (max CUDA 12.8)</dd>
+  <dt>Driver (final)</dt><dd>580.159.03 (CUDA 13.0 capable)</dd>
+  <dt>Model</dt><dd>Qwen3.6-27B (hybrid attention + DeltaNet, ~27 B params, multimodal)</dd>
+  <dt>Goal</dt><dd>One endpoint, fastest tok/s for an agentic workload</dd>
+</dl>
+
+<p>Qwen3.6-27B is interesting because it's a <strong>hybrid architecture</strong> — softmax attention layers interleaved with linear attention (DeltaNet/GLA) layers. That hybridity will block our first attempt at a famous KV-cache optimization later. The model is also natively multimodal — every public 27B checkpoint includes a vision tower, even ones marketed as "text" variants.</p>
+
+<h2>Architecture — the final stack</h2>
+
+<div class="arch-diagram">
+  <div class="arch-row">
+    <div class="arch-box">
+      <div class="role">client</div>
+      <div class="name">Agent / API</div>
+      <div class="meta">POST /v1/...</div>
+    </div>
+    <div class="arch-arrow">→</div>
+    <div class="arch-box lb">
+      <div class="role">load balancer</div>
+      <div class="name">nginx :8400</div>
+      <div class="meta">least_conn</div>
+    </div>
+    <div class="arch-arrow">→</div>
+    <div class="arch-fan">
+      <div class="arch-box replica">
+        <div class="role">replica #1</div>
+        <div class="name">vLLM :8500</div>
+        <div class="meta">GPU 0 · RTX 3090</div>
+      </div>
+      <div class="arch-box replica">
+        <div class="role">replica #2</div>
+        <div class="name">vLLM :8501</div>
+        <div class="meta">GPU 1 · RTX 3090</div>
+      </div>
+    </div>
+    <div class="arch-arrow">→</div>
+    <div class="arch-box">
+      <div class="role">model</div>
+      <div class="name">Qwen3.6-27B</div>
+      <div class="meta">AutoRound INT4<br/>+ Genesis<br/>+ MTP n=3</div>
+    </div>
+  </div>
+</div>
+
+<p>Two independent vLLM replicas (no NCCL between them — that turns out to be the whole point) sit behind a least-connections nginx proxy. Concurrent agent calls round-robin onto separate GPUs.</p>
+
+<h2>The journey, stage by stage</h2>
+
+<p>The chart below was the leaderboard we built up over the day. Every entry is a real measurement on the same dual-3090 host, same prompt shape (1024 in / 256–4096 out), single-stream unless noted.</p>
+
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 420" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
+  <style>
+    .pchart-axis { stroke: #8a8a8a; stroke-width: 1; }
+    .pchart-grid { stroke: #2a2a2a; stroke-width: 1; stroke-dasharray: 2 3; }
+    .pchart-label { fill: #c8c8c8; font-size: 11px; }
+    .pchart-value { fill: #ffffff; font-size: 11px; font-weight: 600; text-anchor: middle; }
+    .pchart-title { fill: #f0f0f0; font-size: 14px; font-weight: 600; }
+    .pchart-subtitle { fill: #9a9a9a; font-size: 11px; }
+    .pchart-bar { fill: #4ea1ff; }
+    .pchart-bar-peak { fill: #4ade80; }
+    .pchart-bar-final { fill: #f59e0b; }
+  </style>
+  <rect width="880" height="420" fill="#111317"/>
+  <text class="pchart-title" x="40" y="30">Throughput leaderboard — Qwen3.6-27B on dual RTX 3090</text>
+  <text class="pchart-subtitle" x="40" y="48">Single-stream output tok/s (C=1), 1024-token input · prompts of 256 or 4096 output tokens</text>
+  <line class="pchart-axis" x1="310" y1="70" x2="310" y2="380"/>
+  <line class="pchart-axis" x1="310" y1="380" x2="820" y2="380"/>
+  <line class="pchart-grid" x1="416.25" y1="70" x2="416.25" y2="380"/><text class="pchart-label" x="416.25" y="396" text-anchor="middle">50</text>
+  <line class="pchart-grid" x1="522.5"  y1="70" x2="522.5"  y2="380"/><text class="pchart-label" x="522.5"  y="396" text-anchor="middle">100</text>
+  <line class="pchart-grid" x1="628.75" y1="70" x2="628.75" y2="380"/><text class="pchart-label" x="628.75" y="396" text-anchor="middle">150</text>
+  <line class="pchart-grid" x1="735"    y1="70" x2="735"    y2="380"/><text class="pchart-label" x="735"    y="396" text-anchor="middle">200</text>
+  <text class="pchart-label" x="310" y="396" text-anchor="middle">0</text>
+  <text class="pchart-label" x="565" y="412" text-anchor="middle">tokens / second</text>
+  <text class="pchart-label" x="305" y="92" text-anchor="end">1. Eager (no CUDAGraphs)</text>
+  <rect class="pchart-bar" x="310" y="80" height="22" width="0">
+    <animate attributeName="width" from="0" to="53.4" dur="0.7s" begin="0.05s" fill="freeze"/>
+  </rect>
+  <text class="pchart-value" x="370" y="96" opacity="0">25.1<animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="0.7s" fill="freeze"/></text>
+  <text class="pchart-label" x="305" y="124" text-anchor="end">2. + CUDAGraphs</text>
+  <rect class="pchart-bar" x="310" y="112" height="22" width="0">
+    <animate attributeName="width" from="0" to="91.8" dur="0.7s" begin="0.20s" fill="freeze"/>
+  </rect>
+  <text class="pchart-value" x="408" y="128" opacity="0">43.2<animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="0.85s" fill="freeze"/></text>
+  <text class="pchart-label" x="305" y="156" text-anchor="end">3. + MTP n=3</text>
+  <rect class="pchart-bar" x="310" y="144" height="22" width="0">
+    <animate attributeName="width" from="0" to="108.6" dur="0.7s" begin="0.35s" fill="freeze"/>
+  </rect>
+  <text class="pchart-value" x="425" y="160" opacity="0">51.1<animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="1.0s" fill="freeze"/></text>
+  <text class="pchart-label" x="305" y="188" text-anchor="end">4. + Genesis P67/P82 (single GPU)</text>
+  <rect class="pchart-bar" x="310" y="176" height="22" width="0">
+    <animate attributeName="width" from="0" to="128.8" dur="0.7s" begin="0.50s" fill="freeze"/>
+  </rect>
+  <text class="pchart-value" x="445" y="192" opacity="0">60.6<animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="1.15s" fill="freeze"/></text>
+  <text class="pchart-label" x="305" y="220" text-anchor="end">5. fast-chat fp8 KV preset</text>
+  <rect class="pchart-bar" x="310" y="208" height="22" width="0">
+    <animate attributeName="width" from="0" to="136.6" dur="0.7s" begin="0.65s" fill="freeze"/>
+  </rect>
+  <text class="pchart-value" x="453" y="224" opacity="0">64.3<animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="1.30s" fill="freeze"/></text>
+  <text class="pchart-label" x="305" y="252" text-anchor="end">6. + 4096-output amortization</text>
+  <rect class="pchart-bar" x="310" y="240" height="22" width="0">
+    <animate attributeName="width" from="0" to="190.2" dur="0.7s" begin="0.80s" fill="freeze"/>
+  </rect>
+  <text class="pchart-value" x="507" y="256" opacity="0">89.5<animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="1.45s" fill="freeze"/></text>
+  <text class="pchart-label" x="305" y="284" text-anchor="end">7. + MTP n=5 ← single-GPU peak</text>
+  <rect class="pchart-bar-peak" x="310" y="272" height="22" width="0">
+    <animate attributeName="width" from="0" to="213.1" dur="0.7s" begin="0.95s" fill="freeze"/>
+  </rect>
+  <text class="pchart-value" x="530" y="288" opacity="0">100.3<animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="1.60s" fill="freeze"/></text>
+  <text class="pchart-label" x="305" y="316" text-anchor="end">8. 2 replicas + LB, C=4 agentic</text>
+  <rect class="pchart-bar-final" x="310" y="304" height="22" width="0">
+    <animate attributeName="width" from="0" to="479.0" dur="0.9s" begin="1.20s" fill="freeze"/>
+  </rect>
+  <text class="pchart-value" x="800" y="320" opacity="0">225.4<animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="2.05s" fill="freeze"/></text>
+  <g transform="translate(310, 358)">
+    <rect class="pchart-bar"       x="0"   y="0" width="14" height="14"/>
+    <text class="pchart-label"     x="20"  y="11">single-GPU steps</text>
+    <rect class="pchart-bar-peak"  x="150" y="0" width="14" height="14"/>
+    <text class="pchart-label"     x="170" y="11">single-GPU peak</text>
+    <rect class="pchart-bar-final" x="290" y="0" width="14" height="14"/>
+    <text class="pchart-label"     x="310" y="11">dual-GPU aggregate (LB)</text>
+  </g>
+</svg>
+<figcaption>Each row = one config change. Animation plays once on page load.</figcaption>
+</figure>
+
+<table>
+<thead>
+<tr><th>#</th><th>Stage</th><th class="right">tok/s C=1</th><th class="right">TPOT (ms)</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>Eager mode (no CUDAGraphs)</td><td class="right">25.1</td><td class="right">35.6</td><td>dual-GPU TP=2, AWQ, BF16 KV</td></tr>
+<tr><td>2</td><td>+ CUDAGraphs ON</td><td class="right">43.2</td><td class="right">18.5</td><td>dual-GPU, FP8 KV</td></tr>
+<tr><td>3</td><td>+ MTP <em>n</em>=3 speculative decoding</td><td class="right">51.1</td><td class="right">14.3</td><td>dual-GPU, FP8 KV</td></tr>
+<tr><td>4</td><td>Switch to Lorbus AutoRound, single GPU + Genesis P67/P82/PN8</td><td class="right">60.6</td><td class="right">12.2</td><td>TurboQuant 3-bit KV</td></tr>
+<tr><td>5</td><td>fast-chat preset (FP8 KV, mem-util 0.97)</td><td class="right">64.3</td><td class="right">12.3</td><td>single GPU</td></tr>
+<tr><td>6</td><td>+ 4096-output amortization</td><td class="right">89.5</td><td class="right">11.0</td><td>same</td></tr>
+<tr><td>7</td><td><strong>+ MTP <em>n</em>=5 (single-GPU peak)</strong></td><td class="right peak">100.3</td><td class="right peak">9.7</td><td>single GPU, fast-chat</td></tr>
+<tr><td>8</td><td><strong>2 replicas via LB, C=4 agentic</strong></td><td class="right peak">225.4</td><td class="right peak">15.1</td><td>both GPUs, max-num-seqs=2</td></tr>
+</tbody>
+</table>
+
+<h3>Stage 1 → 2: turn CUDAGraphs back on (43 tok/s)</h3>
+
+<div class="stage-jump"><span class="from">25 tok/s</span><span class="arrow">→</span><span class="to">43 tok/s</span></div>
+
+<p>The first thing I had to do was disable CUDAGraphs (<code>--enforce-eager</code>) because the cudagraph-profiling step OOMed during startup. That immediately costs ~2× decode latency.</p>
+
+<p>The fix: turn <code>--gpu-memory-utilization</code> down from 0.92 → 0.83 to leave room for the cudagraph profile allocation, and set a small <code>--max-num-seqs 8</code> so the cudagraph capture footprint shrinks.</p>
+
+<pre><code><span class="kw">docker</span> run -d --gpus all --shm-size=16gb -p 8500:8000 --ipc=host \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  vllm/vllm-openai:latest \
+  --model cyankiwi/Qwen3.6-27B-AWQ-INT4 \
+  --tensor-parallel-size <span class="num">2</span> \
+  --gpu-memory-utilization <span class="num">0.83</span> \
+  --max-model-len <span class="num">16384</span> \
+  --max-num-seqs <span class="num">8</span> \
+  --kv-cache-dtype fp8 \
+  --enable-prefix-caching
+<span class="com"># 25 → 43 tok/s, ITL 35.6 → 18.5 ms</span></code></pre>
+
+<p>CUDAGraphs replay pre-recorded GPU command sequences instead of dispatching kernels one at a time on each token — for autoregressive decode that's a big win because the dispatch overhead is comparable to a small matmul on this hardware.</p>
+
+<h3>Stage 3: MTP speculative decoding (51 tok/s)</h3>
+
+<div class="stage-jump"><span class="from">43 tok/s</span><span class="arrow">→</span><span class="to">51 tok/s</span></div>
+
+<p>Qwen3.6 ships with a <strong>Multi-Token Prediction (MTP)</strong> head — extra transformer layers trained to predict the next <em>N</em> tokens at once. vLLM uses these as a draft model for speculative decoding: predict 3 tokens cheaply, then have the main model verify in one parallel forward.</p>
+
+<pre><code>--speculative-config <span class="str">'{"method":"mtp","num_speculative_tokens":3}'</span>
+<span class="com"># 43 → 51 tok/s</span></code></pre>
+
+<p>I swept depths 1, 2, 3 — depth 3 won at C=1. Later we'd push this much further once other knobs were tuned.</p>
+
+<h3>Stage 4: the wall — and why we had to rebuild from the foundation</h3>
+
+<p>Two roadblocks hit at the same time:</p>
+
+<p><strong>Roadblock A — CUDA/driver mismatch.</strong> Every vLLM image post-April 15 (where TurboQuant landed) was built against CUDA 12.9 or 13.0 and required driver ≥ 575. We were on driver 570 (CUDA 12.8 ceiling). <em>Symptom:</em> the worker died at startup with <code>Error 804: forward compatibility was attempted on non supported HW</code>.</p>
+
+<p>The fix involved an apt mess (file-overwrite conflicts between <code>nvidia-driver-570</code> sub-packages and the new 580 ones), eventually resolved with:</p>
+
+<pre><code><span class="kw">sudo</span> apt-get -o Dpkg::Options::=<span class="str">"--force-overwrite"</span> install -y -f libnvidia-gl-580
+<span class="kw">sudo</span> apt autoremove -y --purge
+<span class="kw">sudo</span> dpkg --configure -a
+<span class="kw">sudo</span> reboot</code></pre>
+
+<p>After reboot: <code>nvidia-smi</code> showed driver <strong>580.159.03</strong>.</p>
+
+<p><strong>Roadblock B — TurboQuant rejects hybrid models.</strong> TurboQuant is the headline KV-cache compression in modern vLLM (2.6× compression at FP8-key-4-bit-value, basically free quality-wise). I tried to enable it:</p>
+
+<pre><code>vllm serve ... --kv-cache-dtype turboquant_k8v4
+<span class="com"># NotImplementedError: TurboQuant KV cache is not supported for hybrid
+# (attention + Mamba) models. Boundary layer protection requires
+# uniform attention layers.</span></code></pre>
+
+<p>Qwen3.6's DeltaNet linear-attention layers count as "Mamba-like" for this guard. Stock vLLM won't enable TurboQuant on it.</p>
+
+<p><strong>Solution:</strong> Sander's <a href="https://github.com/Sandermage/genesis-vllm-patches">Genesis patches</a> exist precisely to fix this — <code>P4 TurboQuant hybrid model support</code> is one of dozens of patches in the v7.14 modular package. Combined with <a href="https://github.com/noonghunna/qwen36-27b-single-3090">noonghunna's</a> reproducible-stack repo and the <strong><code>Lorbus/Qwen3.6-27B-int4-AutoRound</code></strong> checkpoint (which deliberately keeps the MTP head in BF16 instead of INT4 for clean spec-decode drafts), we got TurboQuant 3-bit KV running on Qwen3.6.</p>
+
+<p>When Genesis booted on our hardware, it auto-detected the GPU profile and self-recommended:</p>
+
+<pre><code>[Genesis GPU profile] detected: NVIDIA GeForce RTX 3090
+  canonical: RTX 3090  cc: (8, 6)  SM: 82  L2: 6 MB  BW: 936 GB/s  regime: bandwidth
+
+[REC] P67   Multi-query verify kernel for spec-decode K+1
+        gain: +25-35%
+[REC] P82   SGLang-style acceptance threshold OR-clause
+        gain: +8-12% (3090 INT4 measured at +10.5%)
+[REC] PN8   MTP/draft online-quant propagation
+        gain: 0% TPS, but ~1-2 GiB total VRAM headroom</code></pre>
+
+<p>We turned all three on. <strong>60.6 tok/s.</strong></p>
+
+<h3>Stage 5–6: fp8 KV beats TurboQuant 3-bit at our size</h3>
+
+<div class="stage-jump"><span class="from">60 tok/s</span><span class="arrow">→</span><span class="to">89 tok/s</span></div>
+
+<p>Surprising finding: at 4096-output single-stream, <strong><code>--kv-cache-dtype fp8_e5m2</code> beat <code>turboquant_3bit_nc</code></strong> (89.5 vs 82.5 tok/s). TurboQuant's compression overhead dominates when the context is small enough that KV memory isn't the bottleneck. The "fast-chat" preset (FP8 KV, 20K context, mem-util 0.97) becomes the right pick.</p>
+
+<p>The other amplifier: <strong>longer outputs amortize TTFT and let MTP acceptance rate stabilize</strong>. Going from 256-output to 4096-output bumped throughput from 64 → 89 tok/s on the same config.</p>
+
+<h3>Stage 7: MTP <em>n</em>=5 — push past the published ceiling (100 tok/s)</h3>
+
+<div class="stage-jump"><span class="from">89 tok/s</span><span class="arrow">→</span><span class="to">100 tok/s</span></div>
+
+<p>The Medium write-up that pointed us to this stack quoted "85 TPS sustained" with MTP <em>n</em>=3. The vLLM docs warn that depth >1 reuses the same MTP layer (lower acceptance). Both turned out conservative on this hardware:</p>
+
+<table>
+<thead><tr><th class="right">MTP depth</th><th class="right">tok/s C=1 (4096 out)</th></tr></thead>
+<tbody>
+<tr><td class="right">1</td><td class="right">47.3</td></tr>
+<tr><td class="right">2</td><td class="right">50.5</td></tr>
+<tr><td class="right">3</td><td class="right">89.5</td></tr>
+<tr><td class="right">4</td><td class="right">107.0</td></tr>
+<tr><td class="right peak">5</td><td class="right peak">113.0 (5-prompt outlier) / 100.3 (stable, 10-prompt)</td></tr>
+<tr><td class="right">6</td><td class="right">105.2 (regresses)</td></tr>
+</tbody>
+</table>
+
+<p>MTP=5 is the local maximum. Beyond that, draft acceptance drops faster than the speculation gain.</p>
+
+<h3>Stage 8: doubling throughput with a load balancer (225 tok/s aggregate)</h3>
+
+<div class="stage-jump"><span class="from">100 tok/s</span><span class="arrow">→</span><span class="to">225 tok/s aggregate</span></div>
+
+<p>The user's question was "single endpoint with the fastest tok/s for an agentic system." For agent workloads that fan out parallel tool calls, the answer is <strong>two independent vLLM replicas behind a load balancer</strong> rather than <code>--tensor-parallel-size 2</code>.</p>
+
+<p>Why not TP=2? Because <strong>tensor parallelism on dual PCIe-3090s loses to two independent replicas</strong>. We measured this directly: TP=2 with Genesis tunings landed at ~55-68 tok/s (NCCL all-reduce overhead per layer dominates the compute speedup). Two replicas with no NCCL between them keep the full 100 tok/s per replica.</p>
+
+<p>Load balancer config (~30 lines of nginx):</p>
+
+<pre><code><span class="fn">events</span> { worker_connections <span class="num">4096</span>; }
+<span class="fn">http</span> {
+    <span class="fn">upstream</span> vllm_pool {
+        least_conn;
+        server <span class="num">127.0.0.1:8500</span> max_fails=<span class="num">3</span> fail_timeout=10s;
+        server <span class="num">127.0.0.1:8501</span> max_fails=<span class="num">3</span> fail_timeout=10s;
+    }
+    proxy_read_timeout    <span class="num">900</span>s;
+    proxy_send_timeout    <span class="num">900</span>s;
+    proxy_buffering       off;        <span class="com"># SSE / streamed completions</span>
+    proxy_request_buffering off;
+    <span class="fn">server</span> {
+        listen <span class="num">8400</span>;
+        location / {
+            proxy_pass http://vllm_pool;
+            proxy_http_version <span class="num">1.1</span>;
+            proxy_set_header Connection <span class="str">""</span>;
+        }
+    }
+}</code></pre>
+
+<p><code>least_conn</code> (not round-robin) is important — it routes each new request to whichever replica has fewer active streams, which avoids hot-spotting if one request takes much longer than another.</p>
+
+<p>The concurrency curve through the LB:</p>
+
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 380" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
+  <style>
+    .cchart-axis { stroke: #8a8a8a; stroke-width: 1; }
+    .cchart-grid { stroke: #2a2a2a; stroke-width: 1; stroke-dasharray: 2 3; }
+    .cchart-label { fill: #c8c8c8; font-size: 11px; }
+    .cchart-title { fill: #f0f0f0; font-size: 14px; font-weight: 600; }
+    .cchart-subtitle { fill: #9a9a9a; font-size: 11px; }
+    .cchart-line-tps { fill: none; stroke: #4ade80; stroke-width: 2.5; stroke-linejoin: round; }
+    .cchart-line-ttft { fill: none; stroke: #f87171; stroke-width: 2; stroke-dasharray: 4 4; stroke-linejoin: round; }
+    .cchart-dot { fill: #4ade80; }
+    .cchart-dot-ttft { fill: #f87171; }
+    .cchart-anno { fill: #ffffff; font-size: 11px; font-weight: 600; text-anchor: middle; }
+    .cchart-anno-bad { fill: #fca5a5; font-size: 11px; text-anchor: middle; }
+    .cchart-axis-label { fill: #c8c8c8; font-size: 11px; }
+    .cchart-sweet { fill: rgba(74, 222, 128, 0.10); }
+  </style>
+  <rect width="720" height="380" fill="#111317"/>
+  <text class="cchart-title" x="40" y="28">Aggregate throughput vs concurrency — 2 replicas behind nginx LB</text>
+  <text class="cchart-subtitle" x="40" y="46">Single endpoint :8400, least-conn routing · 1024 in / 1024 out · max-num-seqs=2 per replica</text>
+  <rect class="cchart-sweet" x="370" y="80" width="80" height="220"/>
+  <text class="cchart-anno" x="410" y="76" fill="#4ade80">sweet spot</text>
+  <line class="cchart-axis" x1="80"  y1="300" x2="670" y2="300"/>
+  <line class="cchart-axis" x1="80"  y1="80"  x2="80"  y2="300"/>
+  <line class="cchart-grid" x1="80" y1="256" x2="670" y2="256"/><text class="cchart-axis-label" x="74" y="260" text-anchor="end">50</text>
+  <line class="cchart-grid" x1="80" y1="212" x2="670" y2="212"/><text class="cchart-axis-label" x="74" y="216" text-anchor="end">100</text>
+  <line class="cchart-grid" x1="80" y1="168" x2="670" y2="168"/><text class="cchart-axis-label" x="74" y="172" text-anchor="end">150</text>
+  <line class="cchart-grid" x1="80" y1="124" x2="670" y2="124"/><text class="cchart-axis-label" x="74" y="128" text-anchor="end">200</text>
+  <line class="cchart-grid" x1="80" y1="80"  x2="670" y2="80" /><text class="cchart-axis-label" x="74" y="84"  text-anchor="end">250</text>
+  <text class="cchart-axis-label" x="74" y="304" text-anchor="end">0</text>
+  <text class="cchart-axis-label" x="130" y="320" text-anchor="middle">C=1</text>
+  <text class="cchart-axis-label" x="250" y="320" text-anchor="middle">C=2</text>
+  <text class="cchart-axis-label" x="410" y="320" text-anchor="middle">C=4</text>
+  <text class="cchart-axis-label" x="600" y="320" text-anchor="middle">C=8</text>
+  <text class="cchart-axis-label" x="375" y="345" text-anchor="middle">concurrency (parallel requests)</text>
+  <text class="cchart-axis-label" x="40" y="195" transform="rotate(-90, 40, 195)" text-anchor="middle">aggregate output tok/s</text>
+  <path class="cchart-line-tps" d="M 130 228 L 250 164.5 L 410 101.6 L 600 153.0">
+    <animate attributeName="stroke-dasharray" from="0 1000" to="1000 0" dur="1.5s" fill="freeze"/>
+  </path>
+  <circle class="cchart-dot" cx="130" cy="228" r="5"><animate attributeName="r" from="0" to="5" dur="0.3s" begin="0.4s" fill="freeze"/></circle>
+  <circle class="cchart-dot" cx="250" cy="164.5" r="5"><animate attributeName="r" from="0" to="5" dur="0.3s" begin="0.7s" fill="freeze"/></circle>
+  <circle class="cchart-dot" cx="410" cy="101.6" r="6"><animate attributeName="r" from="0" to="6" dur="0.3s" begin="1.0s" fill="freeze"/></circle>
+  <circle class="cchart-dot" cx="600" cy="153.0" r="5"><animate attributeName="r" from="0" to="5" dur="0.3s" begin="1.3s" fill="freeze"/></circle>
+  <text class="cchart-anno" x="130" y="218">81.8</text>
+  <text class="cchart-anno" x="250" y="154">154.0</text>
+  <text class="cchart-anno" x="410" y="91">225.4</text>
+  <text class="cchart-anno-bad" x="600" y="143">167.0</text>
+  <path class="cchart-line-ttft" d="M 130 288.8 L 250 290.7 L 410 284.2 L 600 250"/>
+  <circle class="cchart-dot-ttft" cx="130" cy="288.8" r="3"/>
+  <circle class="cchart-dot-ttft" cx="250" cy="290.7" r="3"/>
+  <circle class="cchart-dot-ttft" cx="410" cy="284.2" r="3"/>
+  <circle class="cchart-dot-ttft" cx="600" cy="250"  r="3"/>
+  <text class="cchart-anno-bad" x="600" y="244">19s queue!</text>
+  <g transform="translate(80, 362)">
+    <line class="cchart-line-tps" x1="0" y1="0" x2="20" y2="0"/>
+    <circle class="cchart-dot" cx="10" cy="0" r="3"/>
+    <text class="cchart-axis-label" x="28" y="4">aggregate tok/s</text>
+    <line class="cchart-line-ttft" x1="180" y1="0" x2="200" y2="0"/>
+    <circle class="cchart-dot-ttft" cx="190" cy="0" r="3"/>
+    <text class="cchart-axis-label" x="208" y="4">mean TTFT (the queue tax)</text>
+  </g>
+</svg>
+<figcaption>Sweet spot at C=4 (= 2 replicas × max-num-seqs=2). Beyond that, requests queue and TTFT explodes.</figcaption>
+</figure>
+
+<table>
+<thead><tr><th class="right">Concurrency</th><th class="right">Aggregate tok/s</th><th class="right">Per-stream TPOT</th><th class="right">Mean TTFT</th></tr></thead>
+<tbody>
+<tr><td class="right">1</td><td class="right">81.8</td><td class="right">11.2 ms</td><td class="right">1.0 s</td></tr>
+<tr><td class="right">2</td><td class="right">154.0 (1.88×)</td><td class="right">11.9 ms</td><td class="right">0.84 s</td></tr>
+<tr><td class="right peak">4</td><td class="right peak">225.4 (2.75×)</td><td class="right peak">15.1 ms</td><td class="right peak">1.44 s</td></tr>
+<tr><td class="right">8</td><td class="right">167.0 (queue forms)</td><td class="right">20.4 ms</td><td class="right">19 s</td></tr>
+</tbody>
+</table>
+
+<p><strong>Sweet spot is C=4</strong> — exactly <code>replicas (2) × max-num-seqs (2)</code>. Beyond that, requests queue inside a replica and TTFT explodes.</p>
+
+<p>For an agent firing 2-4 parallel tool calls / sub-agents, this is the answer: <strong>single endpoint at port 8400, ~225 tok/s aggregate, no NCCL overhead, no per-replica context coordination needed</strong>.</p>
+
+<h2>Reproducible recipes</h2>
+
+<h3>Single RTX 3090 — peak single-stream (100 tok/s)</h3>
+
+<pre><code><span class="com"># Prereqs (Ubuntu 22.04 / 24.04 example)</span>
+<span class="kw">sudo</span> apt install -y nvidia-driver-580       <span class="com"># driver ≥ 575 required for CUDA 12.9+</span>
+<span class="kw">sudo</span> reboot
+
+<span class="com"># Stack components</span>
+<span class="kw">mkdir</span> -p ~/qwen3.6-stack && <span class="kw">cd</span> ~/qwen3.6-stack
+git clone https://github.com/noonghunna/qwen36-27b-single-3090.git repo
+git clone https://github.com/Sandermage/genesis-vllm-patches.git genesis
+hf download Lorbus/Qwen3.6-27B-int4-AutoRound  <span class="com"># ~19 GB</span>
+
+<span class="com"># Image</span>
+<span class="kw">docker</span> pull vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
+
+<span class="com"># Launch</span>
+SNAP=$(ls -d ~/.cache/huggingface/hub/models--Lorbus--Qwen3.6-27B-int4-AutoRound/snapshots/*/ | head -1)
+<span class="kw">docker</span> run -d --name qwen36-vllm --gpus all -p 8500:8000 --ipc=host --shm-size=16gb \
+  -v <span class="str">"${SNAP%/}"</span>:/model:ro \
+  -v <span class="str">"$(pwd)/genesis/vllm/_genesis"</span>:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro \
+  -v <span class="str">"$(pwd)/repo/patches/patch_tolist_cudagraph.py"</span>:/patches/patch_tolist_cudagraph.py:ro \
+  -e VLLM_WORKER_MULTIPROC_METHOD=spawn -e NCCL_CUMEM_ENABLE=0 -e NCCL_P2P_DISABLE=1 \
+  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512 \
+  -e VLLM_USE_FLASHINFER_SAMPLER=1 -e OMP_NUM_THREADS=1 \
+  -e GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=1 \
+  -e GENESIS_ENABLE_P82=1 \
+  -e GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1 \
+  --entrypoint /bin/bash \
+  vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08 \
+  -c <span class="str">'set -e
+      pip install xxhash pandas scipy -q
+      python3 -m vllm._genesis.patches.apply_all
+      python3 /patches/patch_tolist_cudagraph.py
+      exec vllm serve /model \
+        --served-model-name qwen36-27b \
+        --quantization auto_round --dtype float16 --tensor-parallel-size 1 \
+        --max-model-len 20000 --gpu-memory-utilization 0.97 \
+        --max-num-seqs 1 --max-num-batched-tokens 2048 \
+        --kv-cache-dtype fp8_e5m2 \
+        --trust-remote-code --reasoning-parser qwen3 \
+        --enable-prefix-caching --enable-chunked-prefill \
+        --speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":5}" \
+        --host 0.0.0.0 --port 8000'</span></code></pre>
+
+<p><strong>Expected: ~100 tok/s C=1 at 4096-output decode, ~66 tok/s for short chat.</strong></p>
+
+<h3>Dual RTX 3090 — two replicas behind a load balancer (225 tok/s aggregate)</h3>
+
+<p>Run the single-3090 launcher twice with different <code>--gpus</code> flags and ports, then put nginx in front:</p>
+
+<pre><code><span class="com"># Replica 1 → GPU 0 → port 8500    (same command as above, but)</span>
+<span class="kw">docker</span> run -d --name qwen36-vllm-1 --gpus <span class="str">'"device=0"'</span> -p 8500:8000 ... \
+  --max-num-seqs <span class="num">2</span> --max-num-batched-tokens <span class="num">2048</span> \
+  --gpu-memory-utilization <span class="num">0.92</span> \
+  --speculative-config <span class="str">'{"method":"mtp","num_speculative_tokens":3}'</span> ...
+
+<span class="com"># Replica 2 → GPU 1 → port 8501    (identical except --gpus '"device=1"' and -p 8501:8000)</span>
+<span class="kw">docker</span> run -d --name qwen36-vllm-2 --gpus <span class="str">'"device=1"'</span> -p 8501:8000 ... <span class="com">(same flags)</span>
+
+<span class="com"># Load balancer</span>
+<span class="kw">cat</span> > nginx.conf &lt;&lt;'EOF'
+events { worker_connections 4096; }
+http {
+    upstream vllm_pool {
+        least_conn;
+        server 127.0.0.1:8500;
+        server 127.0.0.1:8501;
+    }
+    proxy_read_timeout 900s; proxy_buffering off; proxy_request_buffering off;
+    server {
+        listen 8400;
+        location / { proxy_pass http://vllm_pool; proxy_http_version 1.1; proxy_set_header Connection ""; }
+    }
+}
+EOF
+
+<span class="kw">docker</span> run -d --name qwen36-lb --network host \
+  -v $(pwd)/nginx.conf:/etc/nginx/nginx.conf:ro nginx:alpine</code></pre>
+
+<p>Hit <code>http://localhost:8400/v1/chat/completions</code> with up to <strong>4 concurrent requests</strong> for max aggregate throughput.</p>
+
+<p>Notes on the dual-replica config: bump <code>--max-num-seqs</code> from 1 (single-3090 default) to <strong>2</strong> so each replica can absorb 2 streams when concurrency exceeds replica count. We dropped MTP from 5 → 3 because higher concurrency reduces per-stream MTP acceptance gain. We also lowered <code>--gpu-memory-utilization</code> from 0.97 → 0.92 to leave room for the GDN linear-attention warmup buffers (which OOMed at higher utilization with batched workloads).</p>
+
+<h3>Quick benchmark</h3>
+
+<pre><code><span class="com"># Inside the same vLLM image — built-in `vllm bench serve`</span>
+<span class="kw">docker</span> run --rm --network host --entrypoint vllm \
+  vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08 \
+  bench serve --backend openai --base-url http://localhost:8400 \
+  --model qwen36-27b --tokenizer Lorbus/Qwen3.6-27B-int4-AutoRound \
+  --dataset-name random --random-input-len <span class="num">1024</span> --random-output-len <span class="num">1024</span> \
+  --num-prompts <span class="num">16</span> --max-concurrency <span class="num">4</span> --trust-remote-code</code></pre>
+
+<p>Send a warm-up request first (the first generation incurs cudagraph-recompile latency that skews 5-prompt averages).</p>
+
+<h2>Will this work on RTX 4090 / 5090?</h2>
+
+<p>Short answer: <strong>yes, with caveats and likely better numbers</strong>.</p>
+
+<table>
+<thead><tr><th>GPU</th><th>SM / CC</th><th>VRAM</th><th>Recommendation</th></tr></thead>
+<tbody>
+<tr><td>RTX 3090</td><td>Ampere, 8.6</td><td>24 GB</td><td>This blog post. Genesis recommends P67/P82/PN8.</td></tr>
+<tr><td>RTX 4090</td><td>Ada Lovelace, 8.9</td><td>24 GB</td><td>Same recipe should run; <strong>expect higher tok/s</strong> — Ada has higher SM throughput and ~2× the memory bandwidth (1008 vs 936 GB/s). Genesis P67 is hardware-conditional; check <code>genesis.apply_all</code> output for new recommendations.</td></tr>
+<tr><td>RTX 5090</td><td>Blackwell, 12.0</td><td>32 GB</td><td>Native FP8 + FP4 support changes the calculus. The fast-chat fp8 KV path gains hardware acceleration; the TurboQuant path may also become more attractive. The <strong>8 GB extra VRAM</strong> lets you raise <code>--max-model-len</code>, run higher <code>--max-num-seqs</code>, or skip quantization entirely (BF16 weights ≈ 54 GB → still need quant on a single card, but room is much friendlier). vLLM nightly tags ending in <code>-cu130</code> are Blackwell-ready.</td></tr>
+</tbody>
+</table>
+
+<p>What we did NOT verify directly on 4090/5090 — those numbers will need their own measurements. But the <em>recipe</em> (Lorbus AutoRound + Genesis patches + MTP <em>n</em>=5 + fp8 KV + nginx LB for dual cards) is hardware-agnostic. Genesis re-detects on launch and adjusts patch recommendations per arch.</p>
+
+<p><strong>Hardware-specific watch-outs for 4090/5090:</strong></p>
+
+<ol>
+<li><strong>5090 + driver 580 may be too old</strong> — Blackwell support landed in driver 575 but 5090-specific fixes are still in 590+. Use the latest stable driver.</li>
+<li><strong>Both 4090 and 5090 have higher TDP</strong> (450 W and 575 W respectively) — verify your PSU and thermals before sustained runs.</li>
+<li><strong>The GDN linear-attention OOM cliff is independent of GPU class</strong> — it's a per-prompt scratch-buffer issue. Stay at <code>--max-num-seqs 2</code> until the upstream kernel fix lands.</li>
+</ol>
+
+<p>For dual 4090s or dual 5090s, <strong>the load-balancer pattern still wins over TP=2</strong> for the dense 27B unless you have NVLink (4090s don't have it; 5090 NVLink situation is hardware-specific). PCIe NCCL all-reduces are the same penalty as on 3090s.</p>
+
+<p><strong>For the MoE on 4090/5090:</strong> the calculus is different again. The 35B-A3B AWQ-INT4 checkpoint is 24 GB, which fits on a 32 GB 5090 with room for KV cache — meaning <strong>a 5090 unlocks the 2-replica + LB pattern that's impossible on dual 3090s</strong> (each 3090 can't fit the model alone). Two 5090s with two independent MoE replicas + nginx LB could plausibly hit 500+ tok/s aggregate. We did not measure this, but the architectural barrier is gone. On dual 4090s (24 GB each), you're still in single-instance TP=2+EP territory, just faster than 3090.</p>
+
+<h2>Lessons learned</h2>
+
+<ol>
+<li><strong>Tensor parallelism is not always the answer.</strong> On consumer cards without NVLink, two replicas with a load balancer beat TP=2 for both single-stream and aggregate throughput. NCCL all-reduces over PCIe Gen4 are surprisingly costly.</li>
+<li><strong>The first usable benchmark always lies.</strong> Five-prompt averages with cold-start TTFT outliers gave us a noisy 113 tok/s peak. Ten-prompt warmed-up averages gave 100. Always warm and always re-run.</li>
+<li><strong>MTP depth >1 isn't always lower acceptance.</strong> vLLM warns about it in red letters; we still hit a clean +30% from MTP=3 → MTP=5 on this model. Trust measurements over warnings.</li>
+<li><strong>Hybrid architectures break optimizations silently.</strong> The "TurboQuant doesn't work on hybrid models" guard is a polite <code>NotImplementedError</code>. Without that guard you'd get garbage outputs and not know why.</li>
+<li><strong>Driver upgrades on Ubuntu remain hostile.</strong> apt's autoremove logic for split nvidia packages doesn't always do the right thing. <code>--force-overwrite</code> is the reliable escape valve when dpkg complains about file conflicts between NN-suffixed package families.</li>
+<li><strong>The community is ahead of the docs.</strong> Sander's Genesis patches and noonghunna's repo were doing what the official Medium write-up reported (and more) two weeks before the docs caught up. For cutting-edge LLM serving, the trail of GitHub issues and Reddit posts is the source of truth.</li>
+<li><strong>Long outputs amortize everything.</strong> TTFT, cudagraph recompile cost, prefix-caching warmup — they all dilute as decode steps multiply. Benchmark at realistic generation lengths for your workload, not the toolkit defaults.</li>
+</ol>
+
+<h2>Round 2: Qwen3.6-35B-A3B (MoE) — different model, different bottlenecks</h2>
+
+<p>After the 27B dense work landed, the same dual-3090 host took a second pass — this time with the <strong>MoE variant</strong>. Same Genesis patches, same vLLM nightly, similar overall plan. But almost every architectural assumption flipped, and the optimizations that won for dense regressed for MoE.</p>
+
+<h3>What changed about the model</h3>
+
+<p><code>Qwen3.6-35B-A3B</code> is a sparse mixture-of-experts: <strong>35B total parameters, only 3B active per token</strong>. Each forward pass dynamically routes through ~8 of the 128 experts. Three things follow from that:</p>
+
+<ol>
+<li><strong>Decode is naturally fast</strong> — only 3B-equivalent compute per token, even though the model is bigger than the dense 27B. The 27B-dense needed MTP <em>n</em>=5 speculative decoding to push TPOT down to 9.7 ms; the MoE hits 9.95 ms TPOT <em>without any speculation</em>.</li>
+<li><strong>Memory is the bottleneck, not compute</strong> — every expert must be resident in VRAM (you can't predict which ones will be needed). The AWQ-INT4 checkpoint (<code>QuantTrio/Qwen3.6-35B-A3B-AWQ</code>) is 24 GB on disk, which doesn't fit on a single 24 GB 3090 with KV cache and activations. <strong>The 2-replica + LB pattern from the 27B doesn't apply here</strong> — each replica won't fit on one card. We're forced into a single-instance <code>--tensor-parallel-size 2</code> configuration with <code>--enable-expert-parallel</code> to shard experts across both GPUs.</li>
+<li><strong>Prefill is much faster</strong> than the 27B-dense, because attention layers are dense (only the FFN/expert layers are sparse). Mean TTFT dropped from ~1.0 s on the dense 27B to <strong>277 ms</strong> on the MoE for the same 1024-token prompt.</li>
+</ol>
+
+<h3>The recipe (one container, both GPUs)</h3>
+
+<pre><code><span class="kw">docker</span> run -d --name qwen36-moe --gpus all -p 8500:8000 --ipc=host --shm-size=16gb \
+  -v &lt;model-dir&gt;:/model:ro \
+  -v &lt;genesis&gt;/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro \
+  -v &lt;patch_tolist_cudagraph.py&gt;:/patches/patch_tolist_cudagraph.py:ro \
+  -e GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=1 \
+  -e GENESIS_ENABLE_P82=1 \
+  -e GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1 \
+  vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08 \
+  --model &lt;snapshot&gt; --quantization awq_marlin --dtype float16 \
+  --tensor-parallel-size <span class="num">2</span> --enable-expert-parallel \
+  --max-model-len <span class="num">32000</span> --gpu-memory-utilization <span class="num">0.92</span> \
+  --max-num-seqs <span class="num">4</span> --max-num-batched-tokens <span class="num">4096</span> \
+  --kv-cache-dtype fp8_e5m2 \
+  --enable-prefix-caching --enable-chunked-prefill
+  <span class="com"># Notably absent: --speculative-config (see below)</span></code></pre>
+
+<h3>Genesis patches that mattered for MoE</h3>
+
+<p>The same <code>genesis.apply_all</code> that ran on the 27B reported a <em>different</em> recommendation set when the MoE booted on our SM 8.6 hardware. The relevant new ones:</p>
+
+<ul>
+<li><strong>P31 — MoE router fp32 softmax</strong> (auto-applied for grouped-MoE models). Stops a small numerical bias in the top-k expert choice.</li>
+<li><strong>P17/P18 — Marlin MoE per-SM tuning</strong> (auto-applied for SM 8.6). Compensates for the missing tuned MoE config on RTX 3090 (<code>E=128,N=512,device_name=NVIDIA_GeForce_RTX_3090.json</code> is not shipped — vLLM falls back to defaults; Genesis closes that gap with hand-tuned <code>bsm=8</code>).</li>
+<li><strong>P24 — fused_moe num_warps/num_stages overlay</strong>: also auto-applied; tunes the Triton MoE kernel for our memory-bandwidth regime.</li>
+<li><strong>P72 — profile_run M cap</strong> (opt-in via <kbd>GENESIS_ENABLE_P72_PROFILE_RUN_CAP=1</kbd>): unblocks <code>--max-num-batched-tokens &gt; 4096</code> on MoE by working around a Dynamo fake-tensor shape-inference mismatch in <code>moe_align_block_size</code>.</li>
+</ul>
+
+<p>We turned P72 on. The Marlin tuning and P31 router fix happen automatically — no env var needed.</p>
+
+<h3>What didn't work (and why)</h3>
+
+<p>Two things from the 27B playbook explicitly regress on this MoE:</p>
+
+<p><strong>1. MTP speculative decoding causes profile_run OOM.</strong> Adding <code>--speculative-config '{"method":"mtp","num_speculative_tokens":3}'</code> to the MoE config triggers a GDN linear-attention warmup OOM during engine startup. The MTP layers themselves contain experts (<code>mtp.layers.0.mlp.experts.*</code>), so depth-3 spec means 3× the MoE expert footprint during dummy_run, which doesn't fit. This corroborates <a href="https://github.com/thc1006/qwen3.6-speculative-decoding-rtx3090">thc1006's exhaustive llama.cpp benchmark of 19 spec-decode configs on Qwen3.6-35B-A3B</a>: on Ampere + A3B, <strong>no spec-decode variant achieves net speedup</strong>. We landed at the same conclusion via a different path.</p>
+
+<p><strong>2. <code>--max-num-seqs 8</code> triggers a vLLM modular-kernel workspace-lock crash mid-execution.</strong> With Genesis P72 you can boot at <code>--max-num-batched-tokens 8192 --max-num-seqs 8</code>, but the engine dies the first time real concurrency hits 8:</p>
+
+<pre><code><span class="kw">RuntimeError</span>: Workspace is locked but allocation from
+'modular_kernel.py:1084:_allocate_buffers' requires <span class="num">448.06</span> MB,
+current size is <span class="num">256.00</span> MB. Workspace growth is not allowed after locking.</code></pre>
+
+<p>The pre-allocation done at profile_run time can't grow under real load. This is a vLLM bug, not a Genesis or hardware issue. <strong><code>--max-num-seqs 4</code> is the safe ceiling</strong> — and it happens to also be where the GPUs saturate, so we're not leaving throughput on the table.</p>
+
+<h3>The numbers</h3>
+
+<p>Single endpoint at <code>http://localhost:8500</code>, TP=2 + expert-parallel, <code>max-num-seqs=4</code>. Same prompt shape as the 27B benches (1024 input / 1024 output, 1024 input / 256 output for "chat-shape").</p>
+
+<table>
+<thead><tr><th class="right">Concurrency</th><th class="right">Aggregate output tok/s</th><th class="right">Mean TPOT</th><th class="right">Mean TTFT</th></tr></thead>
+<tbody>
+<tr><td class="right">1 (chat, 256 out)</td><td class="right">90.3</td><td class="right">9.95 ms</td><td class="right">298 ms</td></tr>
+<tr><td class="right">1 (long, 4096 out)</td><td class="right">98.9</td><td class="right">10.04 ms</td><td class="right">277 ms</td></tr>
+<tr><td class="right">2</td><td class="right">161.5 (1.79×)</td><td class="right">11.85 ms</td><td class="right">556 ms</td></tr>
+<tr><td class="right peak">4</td><td class="right peak">282.7 (3.13×)</td><td class="right peak">13.47 ms</td><td class="right peak">705 ms</td></tr>
+<tr><td class="right">8</td><td class="right">282.2 (saturated)</td><td class="right">13.56 ms</td><td class="right">13.4 s</td></tr>
+</tbody>
+</table>
+
+<figure>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 380" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
+  <style>
+    .cmpchart-axis { stroke: #8a8a8a; stroke-width: 1; }
+    .cmpchart-grid { stroke: #2a2a2a; stroke-width: 1; stroke-dasharray: 2 3; }
+    .cmpchart-title { fill: #f0f0f0; font-size: 14px; font-weight: 600; }
+    .cmpchart-subtitle { fill: #9a9a9a; font-size: 11px; }
+    .cmpchart-line-27b { fill: none; stroke: #f59e0b; stroke-width: 2.5; stroke-linejoin: round; }
+    .cmpchart-line-moe { fill: none; stroke: #4ade80; stroke-width: 2.5; stroke-linejoin: round; }
+    .cmpchart-dot-27b { fill: #f59e0b; }
+    .cmpchart-dot-moe { fill: #4ade80; }
+    .cmpchart-anno-27b { fill: #fbbf24; font-size: 11px; font-weight: 600; text-anchor: middle; }
+    .cmpchart-anno-moe { fill: #86efac; font-size: 11px; font-weight: 600; text-anchor: middle; }
+    .cmpchart-axis-label { fill: #c8c8c8; font-size: 11px; }
+  </style>
+  <rect width="720" height="380" fill="#111317"/>
+  <text class="cmpchart-title" x="40" y="28">27B-dense (LB) vs 35B-MoE (TP=2+EP) — aggregate tok/s</text>
+  <text class="cmpchart-subtitle" x="40" y="46">Same hardware (dual RTX 3090). 1024 in / 1024 out. Different configs but same single-endpoint goal.</text>
+  <line class="cmpchart-axis" x1="80"  y1="300" x2="670" y2="300"/>
+  <line class="cmpchart-axis" x1="80"  y1="80"  x2="80"  y2="300"/>
+  <line class="cmpchart-grid" x1="80" y1="227" x2="670" y2="227"/><text class="cmpchart-axis-label" x="74" y="231" text-anchor="end">100</text>
+  <line class="cmpchart-grid" x1="80" y1="153" x2="670" y2="153"/><text class="cmpchart-axis-label" x="74" y="157" text-anchor="end">200</text>
+  <line class="cmpchart-grid" x1="80" y1="80"  x2="670" y2="80" /><text class="cmpchart-axis-label" x="74" y="84"  text-anchor="end">300</text>
+  <text class="cmpchart-axis-label" x="74" y="304" text-anchor="end">0</text>
+  <text class="cmpchart-axis-label" x="130" y="320" text-anchor="middle">C=1</text>
+  <text class="cmpchart-axis-label" x="250" y="320" text-anchor="middle">C=2</text>
+  <text class="cmpchart-axis-label" x="410" y="320" text-anchor="middle">C=4</text>
+  <text class="cmpchart-axis-label" x="600" y="320" text-anchor="middle">C=8</text>
+  <text class="cmpchart-axis-label" x="375" y="345" text-anchor="middle">concurrency (parallel requests)</text>
+  <text class="cmpchart-axis-label" x="40" y="195" transform="rotate(-90, 40, 195)" text-anchor="middle">aggregate output tok/s</text>
+  <path class="cmpchart-line-27b" d="M 130 240 L 250 187 L 410 135 L 600 178">
+    <animate attributeName="stroke-dasharray" from="0 1000" to="1000 0" dur="1.4s" fill="freeze"/>
+  </path>
+  <circle class="cmpchart-dot-27b" cx="130" cy="240" r="4"/>
+  <circle class="cmpchart-dot-27b" cx="250" cy="187" r="4"/>
+  <circle class="cmpchart-dot-27b" cx="410" cy="135" r="5"/>
+  <circle class="cmpchart-dot-27b" cx="600" cy="178" r="4"/>
+  <text class="cmpchart-anno-27b" x="130" y="232">82</text>
+  <text class="cmpchart-anno-27b" x="250" y="179">154</text>
+  <text class="cmpchart-anno-27b" x="410" y="125">225</text>
+  <text class="cmpchart-anno-27b" x="600" y="170">167</text>
+  <path class="cmpchart-line-moe" d="M 130 234 L 250 182 L 410 93 L 600 93">
+    <animate attributeName="stroke-dasharray" from="0 1000" to="1000 0" dur="1.4s" begin="0.3s" fill="freeze"/>
+  </path>
+  <circle class="cmpchart-dot-moe" cx="130" cy="234" r="4"/>
+  <circle class="cmpchart-dot-moe" cx="250" cy="182" r="4"/>
+  <circle class="cmpchart-dot-moe" cx="410" cy="93" r="6"/>
+  <circle class="cmpchart-dot-moe" cx="600" cy="93" r="5"/>
+  <text class="cmpchart-anno-moe" x="130" y="220">90</text>
+  <text class="cmpchart-anno-moe" x="250" y="170">161</text>
+  <text class="cmpchart-anno-moe" x="410" y="83">283</text>
+  <text class="cmpchart-anno-moe" x="600" y="83">282</text>
+  <g transform="translate(80, 362)">
+    <line class="cmpchart-line-27b" x1="0" y1="0" x2="20" y2="0"/>
+    <circle class="cmpchart-dot-27b" cx="10" cy="0" r="3"/>
+    <text class="cmpchart-axis-label" x="28" y="4">Qwen3.6-27B-dense (2 replicas + nginx LB, MTP n=3, max-num-seqs=2)</text>
+    <line class="cmpchart-line-moe" x1="0" y1="20" x2="20" y2="20"/>
+    <circle class="cmpchart-dot-moe" cx="10" cy="20" r="3"/>
+    <text class="cmpchart-axis-label" x="28" y="24">Qwen3.6-35B-A3B MoE (TP=2+expert-parallel, max-num-seqs=4)</text>
+  </g>
+</svg>
+<figcaption>The MoE wins on aggregate, the dense wins (slightly) on raw single-stream when run alone with MTP=5.</figcaption>
+</figure>
+
+<h3>Comparison</h3>
+
+<table>
+<thead><tr><th>Stack</th><th>Hardware</th><th>Single-stream tok/s</th><th>Aggregate at C=4</th><th>TPOT</th><th>Why it wins</th></tr></thead>
+<tbody>
+<tr><td>27B-dense, 2 replicas + nginx LB</td><td>2× 3090</td><td>100.3 (alone) / 81.8 (LB)</td><td><strong>225.4</strong></td><td>9.7 / 15.1 ms</td><td>MTP <em>n</em>=5 + Genesis P67/P82 + fp8 KV</td></tr>
+<tr><td>35B-A3B MoE, TP=2 + expert-parallel</td><td>2× 3090</td><td>90.3 / 98.9</td><td class="peak"><strong>282.7</strong></td><td>13.5 ms</td><td>Sparse 3B-active compute + Genesis MoE patches; no spec-decode</td></tr>
+</tbody>
+</table>
+
+<p>The MoE wins on aggregate (+25%) and on TTFT (~1/3 of dense). The dense 27B wins on raw single-stream tok/s when it isn't loaded (100 vs 90), and on absolute model size if you only care about quality-per-VRAM. <strong>For an agentic system fanning out 2-4 parallel calls, the MoE is the better choice on this hardware.</strong></p>
+
+<h3>Lessons specific to MoE</h3>
+
+<ol>
+<li><strong>A "next-gen" optimization (TurboQuant, MTP) on a dense model can be a regression on a MoE.</strong> Don't assume the same recipe transfers — re-measure.</li>
+<li><strong>MoE memory pressure is in the experts, not the activations.</strong> <code>gpu_memory_utilization=0.92</code> works at <code>max-num-seqs=4</code> but breaks at 8 not because of KV cache (FP8 KV is tiny) but because the modular MoE kernel's pre-allocated workspace can't grow with batch size.</li>
+<li><strong>Expert-parallel ≠ tensor-parallel.</strong> <code>--enable-expert-parallel</code> shards experts (only ~3B-equivalent of weights crosses GPUs per token vs the full hidden state in dense TP). NCCL traffic is much lower, so the "TP=2 loses on PCIe-3090" finding from the 27B work <em>doesn't apply</em> to MoE — TP=2+EP is genuinely the right call here.</li>
+<li><strong>Single-instance vs replicated isn't a free choice — it depends on whether the model fits one card.</strong> The 27B dense at INT4 is 14 GB → fits, → replicate. The 35B MoE at INT4 is 24 GB → doesn't fit, → must shard.</li>
+</ol>
+
+<h2>Appendix: full software/config diff</h2>
+
+<table>
+<tbody>
+<tr><td><strong>Driver</strong></td><td>570.172.08 → <strong>580.159.03</strong></td></tr>
+<tr><td><strong>vLLM image</strong></td><td><code>vllm/vllm-openai:latest</code> (0.10.1.1, August 2025) → <strong><code>vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08</code></strong> (0.19.2 / dev205, late April 2026)</td></tr>
+<tr><td><strong>Patches mounted</strong></td><td>Sandermage Genesis v7.14+ (<code>vllm/_genesis/</code>) + <code>patch_tolist_cudagraph.py</code></td></tr>
+<tr><td><strong>Model</strong></td><td><code>cyankiwi/Qwen3.6-27B-AWQ-INT4</code> (multimodal, started here) → <strong><code>Lorbus/Qwen3.6-27B-int4-AutoRound</code></strong> (BF16 MTP head preserved)</td></tr>
+<tr><td><strong>Quantization</strong></td><td><code>awq</code> → <strong><code>auto_round</code></strong></td></tr>
+<tr><td><strong>KV cache</strong></td><td><code>auto</code> (BF16) → <code>fp8</code> → tried <code>turboquant_k8v4</code> (rejected on hybrid) → tried <code>turboquant_3bit_nc</code> (slower than fp8 at our size) → <strong><code>fp8_e5m2</code></strong> (final)</td></tr>
+<tr><td><strong>Tensor parallel</strong></td><td>TP=2 (NCCL overhead) → <strong>TP=1 + 2 replicas + LB</strong> (no NCCL)</td></tr>
+<tr><td><strong>Speculative decoding</strong></td><td>none → MTP <em>n</em>=3 → <strong>MTP <em>n</em>=5</strong> (single-stream peak) / <strong>MTP <em>n</em>=3</strong> (with <code>max-num-seqs 2</code> for dual-replica)</td></tr>
+<tr><td><strong>CUDAGraphs</strong></td><td>disabled (forced by OOM) → <strong>enabled</strong> (after lowering <code>gpu-memory-utilization</code>)</td></tr>
+<tr><td><strong>Prefix caching</strong></td><td>off → on</td></tr>
+<tr><td><strong>Genesis env vars (Round 1 dense)</strong></td><td><kbd>GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=1</kbd>, <kbd>GENESIS_ENABLE_P82=1</kbd>, <kbd>GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1</kbd>, <kbd>GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1</kbd></td></tr>
+</tbody>
+</table>
+
+<h3>Round 2 (MoE) deltas</h3>
+
+<table>
+<thead><tr><th>Knob</th><th>Round 1 (dense 27B)</th><th>Round 2 (MoE 35B-A3B)</th></tr></thead>
+<tbody>
+<tr><td>Model</td><td><code>Lorbus/Qwen3.6-27B-int4-AutoRound</code></td><td><code>QuantTrio/Qwen3.6-35B-A3B-AWQ</code></td></tr>
+<tr><td>Quantization</td><td><code>auto_round</code></td><td><code>awq_marlin</code></td></tr>
+<tr><td>Topology</td><td>TP=1 + 2 replicas + nginx LB</td><td>TP=2 + <code>--enable-expert-parallel</code> (single instance)</td></tr>
+<tr><td><code>--max-num-seqs</code></td><td>2 (per replica)</td><td>4 (single instance)</td></tr>
+<tr><td><code>--max-num-batched-tokens</code></td><td>2048</td><td>4096</td></tr>
+<tr><td>Speculative decoding</td><td>MTP <em>n</em>=3</td><td><strong>None</strong> (regresses on MoE)</td></tr>
+<tr><td>Auto-applied Genesis MoE patches</td><td>n/a</td><td>P31 (MoE router fp32), P17/P18 (Marlin MoE per-SM tune), P24 (fused_moe overlay)</td></tr>
+<tr><td>Single endpoint</td><td>nginx :8400 → least_conn → 8500/8501</td><td>direct vLLM :8500</td></tr>
+<tr><td>Peak aggregate (C=4)</td><td>225 tok/s</td><td class="peak"><strong>283 tok/s</strong></td></tr>
+<tr><td>Peak single-stream</td><td>100 tok/s (MTP <em>n</em>=5)</td><td>99 tok/s (no spec)</td></tr>
+<tr><td>Mean TTFT (C=1)</td><td>1.0 s</td><td>0.28 s</td></tr>
+</tbody>
+</table>
+
+<h2>Credits &amp; sources</h2>
+
+<ul>
+<li><strong>Sandermage</strong> — <a href="https://github.com/Sandermage/genesis-vllm-patches"><code>genesis-vllm-patches</code></a>, v7.14 modular patch package. The single most important component of this entire stack — across both rounds.</li>
+<li><strong>noonghunna</strong> — <a href="https://github.com/noonghunna/qwen36-27b-single-3090"><code>qwen36-27b-single-3090</code></a>, reproducible compose + setup scripts.</li>
+<li><strong>fzbcwvv</strong> — <a href="https://medium.com/@fzbcwvv/an-overnight-stack-for-qwen3-6-27b-85-tps-125k-context-vision-on-one-rtx-3090-0d95c6291914">Medium write-up of the 85 TPS overnight stack</a> that pointed us at the recipe.</li>
+<li><strong>Lorbus</strong> — <a href="https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound"><code>Qwen3.6-27B-int4-AutoRound</code></a> checkpoint (BF16 MTP head, used in Round 1).</li>
+<li><strong>QuantTrio</strong> — <a href="https://huggingface.co/QuantTrio/Qwen3.6-35B-A3B-AWQ"><code>Qwen3.6-35B-A3B-AWQ</code></a> MoE checkpoint used in Round 2.</li>
+<li><strong>thc1006</strong> — <a href="https://github.com/thc1006/qwen3.6-speculative-decoding-rtx3090">exhaustive llama.cpp spec-decode benchmark on Qwen3.6-35B-A3B + RTX 3090</a> that called the result before we re-measured.</li>
+<li><strong>Z Lab</strong> — DFlash speculative decoding (the alternative path, llama.cpp-based; we evaluated and stayed on vLLM for serving).</li>
+<li><strong>vLLM project</strong> — for shipping nightly cu129 images and merging TurboQuant in time for this work.</li>
+<li><strong>Chris Dzombak</strong> — <a href="https://www.dzombak.com/blog/2026/04/a-vllm-docker-compose-recipe-for-running-qwen-3-6-27b-on-dual-rtx-3090s-opencode-configuration/">original dual-3090 vLLM Docker compose</a> that set the initial baseline expectation.</li>
+</ul>
+
+<div class="footer">
+Reproducibility: every benchmark in this post was run on the same hardware on 2026-04-30 with the exact configs listed. Numbers will drift slightly with future Genesis releases and vLLM nightlies.
+</div>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 420" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
+  <style>
+    .axis { stroke: #8a8a8a; stroke-width: 1; }
+    .grid { stroke: #2a2a2a; stroke-width: 1; stroke-dasharray: 2 3; }
+    .label { fill: #c8c8c8; font-size: 11px; }
+    .label-x { text-anchor: end; }
+    .value { fill: #ffffff; font-size: 11px; font-weight: 600; text-anchor: middle; }
+    .title { fill: #f0f0f0; font-size: 14px; font-weight: 600; }
+    .subtitle { fill: #9a9a9a; font-size: 11px; }
+    .bar { fill: #4ea1ff; }
+    .bar-peak { fill: #4ade80; }
+    .bar-final { fill: #f59e0b; }
+  </style>
+  <rect width="880" height="420" fill="#111317"/>
+
+  <text class="title" x="40" y="30">Throughput leaderboard — Qwen3.6-27B on dual RTX 3090</text>
+  <text class="subtitle" x="40" y="48">Single-stream output tok/s (C=1), 1024-token input · prompts of 256 or 4096 output tokens</text>
+
+  <!-- Y axis (categorical, vertical bars on x) -->
+  <!-- We'll use horizontal bars for readability -->
+  <!-- chart area: x [310, 820], y [70, 380] -->
+  <line class="axis" x1="310" y1="70" x2="310" y2="380"/>
+  <line class="axis" x1="310" y1="380" x2="820" y2="380"/>
+
+  <!-- gridlines & x-axis ticks (0..240 tok/s, scale 510 px / 240) -->
+  <!-- Each 50 tok/s = 510/240*50 = 106.25 px -->
+  <g>
+    <line class="grid" x1="416.25" y1="70" x2="416.25" y2="380"/><text class="label" x="416.25" y="396" text-anchor="middle">50</text>
+    <line class="grid" x1="522.5"  y1="70" x2="522.5"  y2="380"/><text class="label" x="522.5"  y="396" text-anchor="middle">100</text>
+    <line class="grid" x1="628.75" y1="70" x2="628.75" y2="380"/><text class="label" x="628.75" y="396" text-anchor="middle">150</text>
+    <line class="grid" x1="735"    y1="70" x2="735"    y2="380"/><text class="label" x="735"    y="396" text-anchor="middle">200</text>
+    <text class="label" x="310" y="396" text-anchor="middle">0</text>
+    <text class="label" x="565" y="412" text-anchor="middle">tokens / second</text>
+  </g>
+
+  <!-- Bars: x = 310, w = tok/s * (510/240) -->
+  <!-- Stage labels and values -->
+  <g>
+    <text class="label label-x" x="305" y="92">1. Eager (no CUDAGraphs)</text>
+    <rect class="bar" x="310" y="80" height="22" width="0">
+      <animate attributeName="width" from="0" to="53.4" dur="0.7s" begin="0.05s" fill="freeze"/>
+    </rect>
+    <text class="value" x="370" y="96" opacity="0">25.1
+      <animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="0.7s" fill="freeze"/>
+    </text>
+
+    <text class="label label-x" x="305" y="124">2. + CUDAGraphs</text>
+    <rect class="bar" x="310" y="112" height="22" width="0">
+      <animate attributeName="width" from="0" to="91.8" dur="0.7s" begin="0.20s" fill="freeze"/>
+    </rect>
+    <text class="value" x="408" y="128" opacity="0">43.2
+      <animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="0.85s" fill="freeze"/>
+    </text>
+
+    <text class="label label-x" x="305" y="156">3. + MTP n=3</text>
+    <rect class="bar" x="310" y="144" height="22" width="0">
+      <animate attributeName="width" from="0" to="108.6" dur="0.7s" begin="0.35s" fill="freeze"/>
+    </rect>
+    <text class="value" x="425" y="160" opacity="0">51.1
+      <animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="1.0s" fill="freeze"/>
+    </text>
+
+    <text class="label label-x" x="305" y="188">4. + Genesis P67/P82 (single GPU)</text>
+    <rect class="bar" x="310" y="176" height="22" width="0">
+      <animate attributeName="width" from="0" to="128.8" dur="0.7s" begin="0.50s" fill="freeze"/>
+    </rect>
+    <text class="value" x="445" y="192" opacity="0">60.6
+      <animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="1.15s" fill="freeze"/>
+    </text>
+
+    <text class="label label-x" x="305" y="220">5. fast-chat fp8 KV preset</text>
+    <rect class="bar" x="310" y="208" height="22" width="0">
+      <animate attributeName="width" from="0" to="136.6" dur="0.7s" begin="0.65s" fill="freeze"/>
+    </rect>
+    <text class="value" x="453" y="224" opacity="0">64.3
+      <animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="1.30s" fill="freeze"/>
+    </text>
+
+    <text class="label label-x" x="305" y="252">6. + 4096-output amortization</text>
+    <rect class="bar" x="310" y="240" height="22" width="0">
+      <animate attributeName="width" from="0" to="190.2" dur="0.7s" begin="0.80s" fill="freeze"/>
+    </rect>
+    <text class="value" x="507" y="256" opacity="0">89.5
+      <animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="1.45s" fill="freeze"/>
+    </text>
+
+    <text class="label label-x" x="305" y="284">7. + MTP n=5  ← single-GPU peak</text>
+    <rect class="bar bar-peak" x="310" y="272" height="22" width="0">
+      <animate attributeName="width" from="0" to="213.1" dur="0.7s" begin="0.95s" fill="freeze"/>
+    </rect>
+    <text class="value" x="530" y="288" opacity="0">100.3
+      <animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="1.60s" fill="freeze"/>
+    </text>
+
+    <text class="label label-x" x="305" y="316">8. 2 replicas + LB, C=4 agentic</text>
+    <rect class="bar bar-final" x="310" y="304" height="22" width="0">
+      <animate attributeName="width" from="0" to="479.0" dur="0.9s" begin="1.20s" fill="freeze"/>
+    </rect>
+    <text class="value" x="800" y="320" opacity="0">225.4
+      <animate attributeName="opacity" from="0" to="1" dur="0.4s" begin="2.05s" fill="freeze"/>
+    </text>
+  </g>
+
+  <!-- Legend -->
+  <g transform="translate(310, 358)">
+    <rect class="bar"       x="0"   y="0" width="14" height="14"/>
+    <text class="label"     x="20"  y="11">single-GPU steps</text>
+    <rect class="bar-peak"  x="150" y="0" width="14" height="14"/>
+    <text class="label"     x="170" y="11">single-GPU peak</text>
+    <rect class="bar-final" x="290" y="0" width="14" height="14"/>
+    <text class="label"     x="310" y="11">dual-GPU aggregate (LB)</text>
+  </g>
+</svg>
