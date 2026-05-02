@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>qwen-control — chat playground</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  /* Chat-specific styles (kept here so the main stylesheet stays focused) */
+  .chat-shell { display: grid; grid-template-columns: 280px 1fr; gap: 18px; height: calc(100vh - 120px); }
+  @media (max-width: 880px) { .chat-shell { grid-template-columns: 1fr; height: auto; } }
+
+  .chat-side {
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-y: auto;
+  }
+  .chat-side h3 { font-size: 0.95em; margin: 0 0 8px; color: var(--fg-dim); }
+  .chat-side textarea {
+    width: 100%;
+    min-height: 120px;
+    background: var(--bg-code);
+    color: var(--fg);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.85em;
+    resize: vertical;
+  }
+  .chat-side .field { margin: 14px 0; }
+  .chat-side .row-inline { display: flex; gap: 10px; align-items: center; }
+  .chat-side input[type=number], .chat-side input[type=range] { flex: 1; }
+
+  .chat-main { display: flex; flex-direction: column; min-height: 0; }
+  .chat-log {
+    flex: 1;
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 16px 20px;
+    overflow-y: auto;
+    margin-bottom: 14px;
+  }
+
+  .msg { margin: 14px 0; padding: 10px 14px; border-radius: 8px; line-height: 1.55; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { background: rgba(78, 161, 255, 0.08); border: 1px solid rgba(78, 161, 255, 0.25); }
+  .msg.assistant { background: var(--bg-code); border: 1px solid var(--rule); }
+  .msg.assistant.streaming::after { content: "▍"; color: var(--accent); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .msg .role { font-size: 0.75em; font-weight: 600; color: var(--fg-mute); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+  .msg .role.assistant { color: var(--accent); }
+  .msg .role.user { color: #93c5fd; }
+
+  .msg .think { display: block; font-size: 0.85em; color: var(--fg-mute); border-left: 2px solid var(--rule); padding-left: 10px; margin: 6px 0; font-style: italic; opacity: 0.85; }
+
+  .chat-empty { text-align: center; color: var(--fg-mute); padding: 60px 20px; font-size: 0.95em; }
+
+  .chat-input-row { display: flex; gap: 10px; }
+  .chat-input-row textarea {
+    flex: 1;
+    background: var(--bg-code);
+    color: var(--fg);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-family: inherit;
+    font-size: 0.95em;
+    resize: vertical;
+    min-height: 60px;
+    max-height: 240px;
+  }
+  .chat-input-row .send-col { display: flex; flex-direction: column; gap: 6px; }
+  .chat-input-row button { white-space: nowrap; min-width: 80px; }
+
+  .chat-stats { display: flex; gap: 14px; font-size: 0.8em; color: var(--fg-mute); margin-top: 8px; }
+  .chat-stats span { font-family: "JetBrains Mono", monospace; }
+
+  .pill-inline { font-size: 0.72em; padding: 2px 8px; }
+  .header-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--rule); margin-bottom: 12px; }
+  .header-bar h1 { margin: 0; font-size: 1.15em; }
+  .header-bar .links a { margin-left: 14px; font-size: 0.9em; }
+
+  .warning-bar { background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.3); color: #fca5a5; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 0.9em; }
+</style>
+</head>
+<body>
+<main style="max-width: 1200px;">
+  <div class="header-bar">
+    <h1>chat playground
+      {% if active_profile %}
+        <span class="pill active pill-inline">{{ served_model_id }}</span>
+      {% else %}
+        <span class="pill off pill-inline">no model active</span>
+      {% endif %}
+    </h1>
+    <div class="links">
+      <a href="/">← dashboard</a>
+      <form method="post" action="/logout" style="display: inline; margin-left: 14px;">
+        <button type="submit" class="btn secondary" style="padding: 4px 10px; font-size: 0.78em;">Sign out</button>
+      </form>
+    </div>
+  </div>
+
+  {% if not is_active %}
+  <div class="warning-bar">
+    No model is active. <a href="/">Switch one on</a> from the dashboard before chatting.
+  </div>
+  {% endif %}
+
+  <div class="chat-shell">
+    <aside class="chat-side">
+      <h3>System prompt</h3>
+      <div class="field">
+        <textarea id="system-prompt" placeholder="Optional system message…">{{ default_system_prompt }}</textarea>
+        <p class="muted" style="font-size: 0.72em; margin: 4px 0 0;">Playground-only. Not sent on /v1/* requests from external clients.</p>
+      </div>
+
+      <h3>Sampling</h3>
+      <div class="field">
+        <label class="muted" style="font-size: 0.78em;">Temperature: <span id="temp-val">0.7</span></label>
+        <input type="range" id="temperature" min="0" max="2" step="0.05" value="0.7">
+      </div>
+      <div class="field">
+        <label class="muted" style="font-size: 0.78em;">Max tokens</label>
+        <input type="number" id="max-tokens" value="1024" min="1" max="32768">
+      </div>
+      <div class="field">
+        <label class="muted" style="font-size: 0.78em;">Top-p: <span id="topp-val">0.95</span></label>
+        <input type="range" id="top_p" min="0" max="1" step="0.01" value="0.95">
+      </div>
+
+      <h3 style="margin-top: 18px;">Conversation</h3>
+      <div class="row-inline">
+        <button class="btn secondary" id="clear-btn" type="button">Clear</button>
+      </div>
+      <p class="muted" style="font-size: 0.72em; margin-top: 8px;">Browser-only memory. Refresh = lose history.</p>
+    </aside>
+
+    <section class="chat-main">
+      <div id="chat-log" class="chat-log">
+        <div id="chat-empty" class="chat-empty">
+          Start a conversation. Streaming responses, multi-turn memory in this tab.
+        </div>
+      </div>
+      <div class="chat-input-row">
+        <textarea id="user-input" placeholder="Message… (Enter to send, Shift+Enter for newline)" rows="2"></textarea>
+        <div class="send-col">
+          <button class="btn" id="send-btn" type="button" {% if not is_active %}disabled{% endif %}>Send</button>
+          <button class="btn secondary" id="stop-btn" type="button" style="display: none;">Stop</button>
+        </div>
+      </div>
+      <div class="chat-stats" id="chat-stats">
+        <span id="stat-tokens">tokens: 0</span>
+        <span id="stat-elapsed"></span>
+        <span id="stat-tps"></span>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+(function () {
+  const API_TOKEN = "{{ api_token }}";
+  const MODEL_ID = "{{ served_model_id }}" || "qwen36-27b";
+
+  const log = document.getElementById('chat-log');
+  const empty = document.getElementById('chat-empty');
+  const input = document.getElementById('user-input');
+  const sendBtn = document.getElementById('send-btn');
+  const stopBtn = document.getElementById('stop-btn');
+  const clearBtn = document.getElementById('clear-btn');
+  const sysPromptEl = document.getElementById('system-prompt');
+  const tempEl = document.getElementById('temperature');
+  const tempVal = document.getElementById('temp-val');
+  const toppEl = document.getElementById('top_p');
+  const toppVal = document.getElementById('topp-val');
+  const maxTokEl = document.getElementById('max-tokens');
+  const statTokens = document.getElementById('stat-tokens');
+  const statElapsed = document.getElementById('stat-elapsed');
+  const statTps = document.getElementById('stat-tps');
+
+  // History is just an array of {role, content}. System prompt is rebuilt on each send.
+  let history = [];
+  let abortController = null;
+
+  tempEl.addEventListener('input', () => tempVal.textContent = tempEl.value);
+  toppEl.addEventListener('input', () => toppVal.textContent = toppEl.value);
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  function appendMessage(role, content, opts) {
+    if (empty) empty.style.display = 'none';
+    const el = document.createElement('div');
+    el.className = 'msg ' + role + (opts && opts.streaming ? ' streaming' : '');
+    const r = document.createElement('div');
+    r.className = 'role ' + role;
+    r.textContent = role;
+    el.appendChild(r);
+    const body = document.createElement('div');
+    body.className = 'body';
+    body.textContent = content;
+    el.appendChild(body);
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+    return body;
+  }
+
+  function clearChat() {
+    history = [];
+    log.innerHTML = '';
+    log.appendChild(empty);
+    empty.style.display = 'block';
+    statTokens.textContent = 'tokens: 0';
+    statElapsed.textContent = '';
+    statTps.textContent = '';
+  }
+  clearBtn.addEventListener('click', clearChat);
+
+  // Send on Enter (Shift+Enter for newline)
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  sendBtn.addEventListener('click', send);
+  stopBtn.addEventListener('click', () => { if (abortController) abortController.abort(); });
+
+  async function send() {
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+
+    // Render the user message
+    appendMessage('user', text);
+    history.push({ role: 'user', content: text });
+
+    // Prepare assistant placeholder
+    const bodyEl = appendMessage('assistant', '', { streaming: true });
+
+    sendBtn.disabled = true;
+    stopBtn.style.display = 'inline-block';
+
+    // Build messages: optional system + history
+    const sys = sysPromptEl.value.trim();
+    const messages = [];
+    if (sys) messages.push({ role: 'system', content: sys });
+    messages.push(...history);
+
+    abortController = new AbortController();
+    const t0 = performance.now();
+    let totalChars = 0;
+
+    try {
+      const resp = await fetch('/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + API_TOKEN,
+        },
+        body: JSON.stringify({
+          model: MODEL_ID,
+          messages,
+          stream: true,
+          temperature: parseFloat(tempEl.value),
+          top_p: parseFloat(toppEl.value),
+          max_tokens: parseInt(maxTokEl.value, 10),
+        }),
+        signal: abortController.signal,
+      });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        bodyEl.textContent = `[HTTP ${resp.status}] ${errText.slice(0, 500)}`;
+        bodyEl.parentElement.classList.remove('streaming');
+        history.pop();  // don't keep the failed turn in history
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let assistantText = '';
+      let reasoningText = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE: lines, "data: ..." per chunk, blank line separates events.
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') continue;
+          try {
+            const obj = JSON.parse(payload);
+            const delta = obj.choices?.[0]?.delta;
+            if (!delta) continue;
+            // Qwen3 thinking mode: `reasoning` field on the delta
+            if (delta.reasoning) {
+              reasoningText += delta.reasoning;
+              renderAssistantBody(bodyEl, reasoningText, assistantText);
+            }
+            if (delta.content) {
+              assistantText += delta.content;
+              totalChars += delta.content.length;
+              renderAssistantBody(bodyEl, reasoningText, assistantText);
+            }
+          } catch (e) {
+            // Ignore malformed chunks
+          }
+          log.scrollTop = log.scrollHeight;
+        }
+        // live stats
+        const elapsedMs = performance.now() - t0;
+        statElapsed.textContent = `elapsed: ${(elapsedMs / 1000).toFixed(1)}s`;
+        if (assistantText.length > 0) {
+          // Rough chars-per-sec → token approximation (~4 chars/token)
+          const approxTokens = Math.round(assistantText.length / 4);
+          statTokens.textContent = `tokens (est): ${approxTokens}`;
+          if (elapsedMs > 100) {
+            statTps.textContent = `~${(approxTokens * 1000 / elapsedMs).toFixed(1)} tok/s`;
+          }
+        }
+      }
+
+      bodyEl.parentElement.classList.remove('streaming');
+      history.push({ role: 'assistant', content: assistantText });
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        bodyEl.textContent += '\n\n[stopped]';
+      } else {
+        bodyEl.textContent = '[error] ' + (e.message || e);
+      }
+      bodyEl.parentElement.classList.remove('streaming');
+    } finally {
+      abortController = null;
+      sendBtn.disabled = !{{ "true" if is_active else "false" }};
+      stopBtn.style.display = 'none';
+      input.focus();
+    }
+  }
+
+  function renderAssistantBody(bodyEl, reasoning, content) {
+    // Render reasoning (thinking) as a muted italic block, then content.
+    bodyEl.innerHTML = '';
+    if (reasoning) {
+      const r = document.createElement('div');
+      r.className = 'think';
+      r.textContent = reasoning;
+      bodyEl.appendChild(r);
+    }
+    if (content) {
+      const c = document.createElement('div');
+      c.textContent = content;
+      bodyEl.appendChild(c);
+    }
+  }
+
+  input.focus();
+})();
+</script>
+</body>
+</html>

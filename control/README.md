@@ -94,6 +94,136 @@ The `model` field is informational — whichever model is currently active will 
 
 Most OpenAI clients retry on 503 automatically.
 
+## Configuring coding agents
+
+Every config below points at the same endpoint:
+
+```
+Base URL:   http://<host>:9000/v1
+API key:    <contents of /var/qwen-control/api_token, or your rotated value>
+Model:      qwen36-27b   (or qwen36-35b-moe — whichever profile is active)
+```
+
+Replace `<host>` with the host's tailnet IP (the perimeter middleware blocks LAN/public IPs by default).
+
+### OpenCode (Sourcegraph CLI agent)
+
+```bash
+export OPENAI_BASE_URL=http://<host>:9000/v1
+export OPENAI_API_KEY=<your-token>
+opencode --model qwen36-27b 'refactor this module for clarity'
+```
+
+Streaming, tool calls, and JSON mode all work — the underlying vLLM stacks have `--tool-call-parser qwen3_coder` enabled.
+
+### Continue (VSCode / JetBrains plugin)
+
+`~/.continue/config.json`:
+
+```json
+{
+  "models": [{
+    "title": "Qwen3.6 (local)",
+    "provider": "openai",
+    "model": "qwen36-27b",
+    "apiBase": "http://<host>:9000/v1",
+    "apiKey": "<your-token>",
+    "completionOptions": {
+      "stream": true,
+      "maxTokens": 4096,
+      "temperature": 0.2
+    }
+  }],
+  "tabAutocompleteModel": {
+    "title": "Qwen3.6 autocomplete",
+    "provider": "openai",
+    "model": "qwen36-27b",
+    "apiBase": "http://<host>:9000/v1",
+    "apiKey": "<your-token>"
+  }
+}
+```
+
+For tab autocomplete specifically, the **27B-dense** profile is usually a better fit (more predictable latency on short-context completion); the **35B-MoE** wins for chat/agentic flows where multiple parallel calls dominate.
+
+### Claude Code
+
+Two paths, depending on your Claude Code version:
+
+**Path A — newer versions with OpenAI-compatible mode** (recommended):
+
+```bash
+export ANTHROPIC_BASE_URL=http://<host>:9000
+export ANTHROPIC_AUTH_TOKEN=<your-token>
+export ANTHROPIC_MODEL=qwen36-27b
+claude
+```
+
+Some Claude Code releases also honor `OPENAI_BASE_URL` / `OPENAI_API_KEY` directly. Check `claude config show` and the version notes for your release.
+
+**Path B — older versions hardcoded to Anthropic API format**: our endpoint speaks OpenAI format, not `/v1/messages`. Use a translator like [LiteLLM](https://github.com/BerriAI/litellm) in front:
+
+```bash
+pip install 'litellm[proxy]'
+litellm --model openai/qwen36-27b \
+        --api_base http://<host>:9000/v1 \
+        --api_key <your-token> \
+        --port 4000
+
+# Then point Claude Code at LiteLLM's Anthropic-format proxy:
+export ANTHROPIC_BASE_URL=http://localhost:4000
+export ANTHROPIC_AUTH_TOKEN=anything   # LiteLLM doesn't require its own auth by default
+```
+
+A native `/v1/messages` translation layer in qwen-control is a candidate for v2 if you find yourself running Claude Code daily.
+
+### OpenClaw / other Claude-Code TUI forks
+
+Same as Claude Code: most forks support `ANTHROPIC_BASE_URL` (some also `OPENAI_BASE_URL`). Try Path A first. If it 404s on `/v1/messages`, drop in LiteLLM as in Path B.
+
+### "Claude Code via Ollama"
+
+A common configuration mistake: people install Ollama and proxy Claude Code through it, hoping Ollama will translate Anthropic ↔ local. **Ollama doesn't natively serve the Anthropic API** — it serves its own `/api/generate` plus an OpenAI-compatible `/v1/chat/completions`.
+
+If that's your setup, **skip Ollama entirely** — qwen-control's `/v1/*` is a drop-in replacement for Ollama's OpenAI-compatible mode, with much higher throughput on this hardware. Point Claude Code at `http://<host>:9000/v1` directly (Path A above).
+
+### Compatibility matrix
+
+| Client | Streaming | Tool calling | System prompt | Notes |
+|---|---|---|---|---|
+| OpenCode | ✅ | ✅ | from client | Just works. |
+| Continue | ✅ | ✅ | from client | `provider: openai` |
+| Cursor | ✅ | ✅ | from client | Settings → Models → Custom OpenAI |
+| OpenWebUI | ✅ | ✅ | per-conversation | Admin → Connections → OpenAI API |
+| Claude Code (new) | ✅ | ✅ | from client | `ANTHROPIC_BASE_URL` |
+| Claude Code (old) | ⚠ via LiteLLM | ✅ via LiteLLM | from client | Anthropic-format → OpenAI translator needed |
+| `openai` Python SDK | ✅ | ✅ | from client | `OpenAI(base_url=..., api_key=...)` |
+| Ollama wrappers | ✅ | depends | depends | Treat us as the OpenAI-compatible upstream |
+
+## Chat playground
+
+Visit `http://<host>:9000/chat` after logging in. Multi-turn streaming chat with:
+
+- System prompt textarea (pre-filled from the admin default if set, see below)
+- Temperature, top-p, max-tokens controls
+- Stop button to abort a generation mid-stream
+- Live token-throughput estimate (chars/4 ÷ elapsed)
+
+State is browser-only — refresh = lose history. This is intentional; the playground is for testing/demos, not a daily chat client.
+
+## Default system prompt (playground-only)
+
+The dashboard's "Playground defaults" card lets you set a default system prompt that pre-fills the chat playground. **It is NOT injected into `/v1/*` requests from external clients** — they always control their own system message. This avoids breaking tool-call schemas, project-context prompts, and other client-side prompting that production agents rely on.
+
+Stored in SQLite at `/var/qwen-control/qwen-control.db`. Edit via the dashboard or directly:
+
+```bash
+docker exec -it qwen-control python3 -c "
+from app import db
+db.set_state('playground_system_prompt', 'You are a helpful assistant.')
+"
+```
+
 ## Configuration
 
 `control/profiles.yaml` defines the two model profiles — what containers belong to each, what URL the readiness check uses, what the upstream port is. Edit it to add a third profile (e.g. a smaller model, or a future Qwen 3.7), then `docker compose -f control/docker-compose.yml restart`.

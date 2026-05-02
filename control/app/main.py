@@ -282,6 +282,54 @@ async def api_change_password(
     return JSONResponse({"ok": True})
 
 
+# ---------- Default playground system prompt --------------------------------
+# Stored in the state table. Pre-fills the /chat playground only; NEVER
+# injected into /v1/* traffic from external clients.
+
+SYSTEM_PROMPT_KEY = "playground_system_prompt"
+
+
+@app.get("/api/admin/system-prompt")
+async def api_get_system_prompt(request: Request) -> Response:
+    if not auth.is_session_authenticated(request):
+        return JSONResponse({"error": "session required"}, status_code=401)
+    return JSONResponse({"prompt": db.get_state(SYSTEM_PROMPT_KEY) or ""})
+
+
+@app.put("/api/admin/system-prompt")
+async def api_set_system_prompt(request: Request) -> Response:
+    if not auth.is_session_authenticated(request):
+        return JSONResponse({"error": "session required"}, status_code=401)
+    body = await request.json()
+    prompt = (body or {}).get("prompt", "")
+    if not isinstance(prompt, str):
+        return JSONResponse({"error": "prompt must be a string"}, status_code=400)
+    if len(prompt) > 16000:
+        return JSONResponse({"error": "prompt too long (>16k chars)"}, status_code=400)
+    db.set_state(SYSTEM_PROMPT_KEY, prompt)
+    return JSONResponse({"ok": True, "length": len(prompt)})
+
+
+# ---------- /chat playground ---------------------------------------------
+
+@app.get("/chat", response_class=HTMLResponse)
+async def chat_playground(request: Request) -> Response:
+    redirect = auth.require_auth_or_redirect(request)
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(
+        "chat.html",
+        {
+            "request": request,
+            "api_token": auth.read_api_token(),
+            "served_model_id": orchestrator.served_model_id() or "",
+            "active_profile": orchestrator.state.active_profile,
+            "default_system_prompt": db.get_state(SYSTEM_PROMPT_KEY) or "",
+            "is_active": orchestrator.state.status == Status.ACTIVE,
+        },
+    )
+
+
 # ---------- /v1 catch-all proxy --------------------------------------------
 
 @app.api_route("/v1/{rest_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])

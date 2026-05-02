@@ -12,6 +12,7 @@
   <div class="topbar">
     <h1 style="margin: 0;">qwen-control</h1>
     <div class="endpoint">
+      <a href="/chat" style="margin-right: 14px;">💬 chat playground</a>
       OpenAI-compatible at <a id="endpoint-link" href="#">http://&lt;this-host&gt;:9000/v1/</a>
       &nbsp;·&nbsp;
       <form method="post" action="/logout" style="display: inline;">
@@ -105,6 +106,59 @@
       </form>
     </details>
   </div>
+
+  <h2>Playground defaults</h2>
+  <div class="card">
+    <p class="muted">
+      Default system prompt for the <a href="/chat">chat playground</a>.
+      <strong>Not</strong> injected into <code>/v1/*</code> traffic from external clients —
+      they always control their own system message.
+    </p>
+    <div class="field">
+      <textarea id="default-system-prompt" rows="6"
+        style="width: 100%; background: var(--bg-code); color: var(--fg); border: 1px solid var(--rule); border-radius: 6px; padding: 10px 12px; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; resize: vertical;"
+        placeholder="Empty by default. Type a system prompt to use as the playground's starting message…"></textarea>
+    </div>
+    <div style="display: flex; gap: 10px; align-items: center;">
+      <button id="save-sys-btn" class="btn" type="button">Save default</button>
+      <span id="sys-saved-msg" class="muted" style="font-size: 0.85em;"></span>
+    </div>
+  </div>
+
+  <script>
+    // Load the default system prompt and wire up save.
+    (async function () {
+      const TOKEN = "{{ api_token }}";
+      const ta = document.getElementById('default-system-prompt');
+      const btn = document.getElementById('save-sys-btn');
+      const msg = document.getElementById('sys-saved-msg');
+      try {
+        const r = await fetch('/api/admin/system-prompt', { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+        if (r.ok) {
+          const j = await r.json();
+          ta.value = j.prompt || '';
+        }
+      } catch (e) { /* non-fatal */ }
+      btn.addEventListener('click', async () => {
+        msg.textContent = 'saving…';
+        try {
+          const r = await fetch('/api/admin/system-prompt', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN },
+            body: JSON.stringify({ prompt: ta.value }),
+          });
+          if (r.ok) {
+            const j = await r.json();
+            msg.textContent = 'saved (' + j.length + ' chars)';
+            setTimeout(() => { msg.textContent = ''; }, 3000);
+          } else {
+            const j = await r.json();
+            msg.textContent = 'error: ' + (j.error || r.status);
+          }
+        } catch (e) { msg.textContent = 'error: ' + e.message; }
+      });
+    })();
+  </script>
 
   <h2>Recent activity</h2>
   <div hx-get="/partial/activity" hx-trigger="load, every 5s" hx-swap="innerHTML">
