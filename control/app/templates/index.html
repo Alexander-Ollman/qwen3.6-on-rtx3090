@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>qwen-control</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+</head>
+<body>
+<main>
+  <div class="topbar">
+    <h1 style="margin: 0;">qwen-control</h1>
+    <div class="endpoint">
+      OpenAI-compatible at <a id="endpoint-link" href="#">http://&lt;this-host&gt;:9000/v1/</a>
+      &nbsp;·&nbsp;
+      <form method="post" action="/logout" style="display: inline;">
+        <button type="submit" class="btn secondary" style="padding: 4px 10px; font-size: 0.78em;">Sign out</button>
+      </form>
+    </div>
+  </div>
+
+  <h2>Status</h2>
+  <div id="state-card"
+       hx-get="/partial/state"
+       hx-trigger="load, every 3s"
+       hx-swap="innerHTML">
+    {% include "partials/state_card.html" %}
+  </div>
+
+  <h2>Models</h2>
+  <div class="cards-grid">
+    {% for p in profiles %}
+    <div class="card">
+      <h3>{{ p.display_name }}</h3>
+      <div>
+        {% if active_profile == p.name %}
+          <span class="pill active">Active</span>
+        {% elif state.progress.target == p.name and state.status.value == "switching" %}
+          <span class="pill switching">Starting</span>
+        {% else %}
+          <span class="pill off">Stopped</span>
+        {% endif %}
+      </div>
+      <p class="desc">{{ p.description }}</p>
+      <div class="meta">
+        Model id: <code>{{ p.served_model_id }}</code><br>
+        Boot: ~{{ p.expected_load_seconds }}s
+      </div>
+      <div style="margin-top: 12px;">
+        {% if active_profile == p.name %}
+          <button class="btn" disabled>Active</button>
+        {% else %}
+          <button class="btn"
+                  hx-post="/api/switch/{{ p.name }}"
+                  hx-headers='{"Authorization": "Bearer {{ api_token }}"}'
+                  hx-trigger="click"
+                  hx-swap="none"
+                  {% if state.status.value == "switching" %}disabled{% endif %}>
+            Switch to this
+          </button>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div style="text-align: center; margin: 24px 0;">
+    <button class="btn danger"
+            hx-post="/api/stop"
+            hx-headers='{"Authorization": "Bearer {{ api_token }}"}'
+            hx-trigger="click"
+            hx-swap="none"
+            hx-confirm="Stop everything and free both GPUs?"
+            {% if state.status.value == "switching" or state.status.value == "off" %}disabled{% endif %}>
+      Stop everything (free GPUs)
+    </button>
+  </div>
+
+  <h2>API access</h2>
+  <div class="card">
+    <p class="muted">Use this token as <code>Authorization: Bearer &lt;token&gt;</code> against the OpenAI-compatible endpoint.</p>
+    <div class="token-row">
+      <div class="kv" id="api-token">{{ api_token }}</div>
+      <button class="btn secondary" onclick="navigator.clipboard.writeText(document.getElementById('api-token').textContent.trim())">Copy</button>
+      <button class="btn"
+              hx-post="/api/rotate-token"
+              hx-trigger="click"
+              hx-swap="none"
+              hx-on::after-request="if (event.detail.successful) { document.getElementById('api-token').textContent = JSON.parse(event.detail.xhr.responseText).api_token; }"
+              hx-confirm="Rotate the API token? All clients using the old token will be locked out.">
+        Rotate
+      </button>
+    </div>
+    <details style="margin-top: 12px;">
+      <summary class="muted" style="cursor: pointer;">Change admin password</summary>
+      <form style="margin-top: 12px;"
+            hx-post="/api/change-password"
+            hx-target="#pw-result"
+            hx-swap="innerHTML">
+        <div class="field"><label>Current password</label><input type="password" name="current_password" required></div>
+        <div class="field"><label>New password (≥ 12 chars)</label><input type="password" name="new_password" minlength="12" required></div>
+        <button type="submit" class="btn">Update password</button>
+        <div id="pw-result"></div>
+      </form>
+    </details>
+  </div>
+
+  <h2>Recent activity</h2>
+  <div hx-get="/partial/activity" hx-trigger="load, every 5s" hx-swap="innerHTML">
+    {% include "partials/activity.html" %}
+  </div>
+</main>
+
+<script>
+  // Set endpoint link to the current host
+  document.getElementById('endpoint-link').textContent =
+    `http://${location.hostname}:${location.port || 9000}/v1/`;
+  document.getElementById('endpoint-link').href =
+    `http://${location.hostname}:${location.port || 9000}/v1/models`;
+</script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+# qwen-control: web UI + OpenAI-compatible proxy + model switcher.
+# See control/README.md for setup.
+services:
+  qwen-control:
+    image: qwen-control:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qwen-control
+    restart: always
+    # host network so the proxy can reach the per-profile vLLM ports
+    # (8400 for the 27B LB, 8500 for the MoE) on localhost without bridging.
+    network_mode: host
+    volumes:
+      # Docker socket — orchestrator stops/starts the qwen-* containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent state: SQLite, generated tokens, password hash.
+      - /var/qwen-control:/var/qwen-control
+      # Profiles + launcher scripts (read-only from inside the container).
+      - ./profiles.yaml:/etc/qwen-control/profiles.yaml:ro
+      - ${QWEN_REPO_ROOT:-..}:/host/repo:ro
+    environment:
+      # Tailscale CIDR allowlist for the perimeter check.
+      # Default: standard Tailscale range. Override via .env if you use a custom one.
+      QWEN_TAILNET_CIDRS: "${QWEN_TAILNET_CIDRS:-100.64.0.0/10,fd7a:115c:a1e0::/48}"
+      # Optional: override the listen port. Default 9000.
+      QWEN_CONTROL_PORT: "${QWEN_CONTROL_PORT:-9000}"
+      # If "1", auto-restore last-active model on container startup.
+      QWEN_AUTO_RESTORE: "${QWEN_AUTO_RESTORE:-1}"
+      # Set to "0" to bypass tailnet IP check (e.g. for local-only testing).
+      QWEN_REQUIRE_TAILNET: "${QWEN_REQUIRE_TAILNET:-1}"

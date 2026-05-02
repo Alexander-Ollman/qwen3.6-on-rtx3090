@@ -9,12 +9,13 @@ Reproducible recipes and a full investigative blog post for serving the **Qwen3.
 
 ## What's in this repo
 
-| File | Purpose |
+| File / dir | Purpose |
 |---|---|
 | [`qwen3.6-on-rtx3090.md`](qwen3.6-on-rtx3090.md) | Full blog post in Markdown — the investigative journey, both rounds |
 | [`qwen3.6-on-rtx3090.html`](qwen3.6-on-rtx3090.html) | Self-contained HTML version with animated SVG charts (drag-and-drop into a browser) |
 | [`launch-27b.sh`](launch-27b.sh) | One-shot script: bring up the 27B-dense 2-replica + nginx LB stack |
 | [`launch-35b-moe.sh`](launch-35b-moe.sh) | One-shot script: bring up the 35B-A3B MoE single-instance TP=2+EP stack |
+| [`control/`](control/) | **Web UI + OpenAI-compatible proxy** — switch models from a browser, single endpoint at `:9000/v1/`, bearer auth, tailnet-only. See [control/README.md](control/README.md). |
 | `*-chart.svg` | Performance charts referenced from the blog |
 
 ## System requirements

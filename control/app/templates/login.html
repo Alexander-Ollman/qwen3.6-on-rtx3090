@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>qwen-control — login</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="center-form">
+  <h1>qwen-control</h1>
+  <p class="muted">Admin password required.</p>
+  {% if error %}
+    <div class="notice error">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="/login">
+    <div class="field">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autofocus required>
+    </div>
+    <button type="submit" class="btn">Sign in</button>
+  </form>
+  <p class="muted" style="margin-top: 18px;">
+    Lost the password? SSH to the host and run <code>control/install.sh --reset</code>.
+  </p>
+</div>
+</body>
+</html>

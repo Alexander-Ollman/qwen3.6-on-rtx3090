@@ -1,0 +1,40 @@
+# Model profiles for qwen-control.
+# Each profile maps a logical model name to a launcher script and an upstream URL.
+# The control plane stops the previous profile's containers, runs the chosen
+# launcher, and waits for the ready_url to return 200 before flipping state.
+
+profiles:
+  27b-dense:
+    display_name: "Qwen3.6-27B Dense"
+    served_model_id: qwen36-27b
+    upstream: "http://localhost:8400"
+    launcher: /host/repo/launch-27b.sh
+    container_names:
+      - qwen36-vllm-1
+      - qwen36-vllm-2
+      - qwen36-lb
+    ready_url: "http://localhost:8400/v1/models"
+    expected_load_seconds: 100
+    description: |
+      Two replicas behind nginx, MTP n=3 spec-decode, FP8 KV cache.
+      Peak: 100 tok/s single-stream, 225 tok/s aggregate at C=4.
+
+  35b-moe:
+    display_name: "Qwen3.6-35B-A3B MoE"
+    served_model_id: qwen36-35b-moe
+    upstream: "http://localhost:8500"
+    launcher: /host/repo/launch-35b-moe.sh
+    container_names:
+      - qwen36-moe
+    ready_url: "http://localhost:8500/v1/models"
+    expected_load_seconds: 90
+    description: |
+      Single instance TP=2 + expert-parallel. No spec-decode (regresses on this MoE).
+      Peak: 99 tok/s single-stream, 283 tok/s aggregate at C=4.
+
+# Containers we don't want grabbing GPUs anymore. install.sh sets these to
+# restart=no and stops them once. Listed here for reference / re-run.
+gpu_competitors:
+  - 3-proxy-docker-vllm-1
+  - sglang
+  - ollama

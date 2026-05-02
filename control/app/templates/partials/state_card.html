@@ -1,0 +1,43 @@
+<div class="card">
+  {% if state.status.value == "active" %}
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <span class="pill active">Active</span>
+        <strong>{{ state.active_profile }}</strong>
+        {% if state.started_at %}
+          <span class="muted">· up since {{ state.started_at | int }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <p class="muted" style="margin-top: 8px;">
+      Serving model id <code>{{ served_model_id }}</code>
+    </p>
+
+  {% elif state.status.value == "switching" %}
+    <div>
+      <span class="pill switching">Switching</span>
+      → <strong>{{ state.progress.target }}</strong>
+      <span class="muted">· expected {{ state.progress.expected_seconds }}s</span>
+    </div>
+    <div class="progress-bar"><div class="fill" style="width: 100%"></div></div>
+    <div class="muted">{{ state.progress.current_step }}</div>
+    {% if state.progress.log_tail %}
+    <div class="progress-log" style="margin-top: 12px;">
+      {%- for line in state.progress.log_tail %}{{ line }}
+{% endfor -%}
+    </div>
+    {% endif %}
+
+  {% elif state.status.value == "error" %}
+    <div>
+      <span class="pill error">Error</span>
+      <span class="muted">{{ state.error_message }}</span>
+    </div>
+
+  {% else %}
+    <div>
+      <span class="pill off">Off</span>
+      <span class="muted">No model loaded. Both GPUs are idle.</span>
+    </div>
+  {% endif %}
+</div>

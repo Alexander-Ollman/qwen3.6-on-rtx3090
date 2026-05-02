@@ -1,0 +1,30 @@
+{% if rows %}
+<table>
+  <thead>
+    <tr>
+      <th>time</th>
+      <th>method</th>
+      <th>path</th>
+      <th class="right">status</th>
+      <th class="right">ms</th>
+      <th>profile</th>
+      <th>ip</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="mono">{{ r.ts | int }}</td>
+      <td>{{ r.method }}</td>
+      <td class="mono">{{ r.path }}</td>
+      <td class="right">{{ r.status }}</td>
+      <td class="right">{{ r.duration_ms }}</td>
+      <td>{{ r.profile or "-" }}</td>
+      <td class="mono">{{ r.remote_ip or "-" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No requests yet.</p>
+{% endif %}
