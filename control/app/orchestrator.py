@@ -207,7 +207,38 @@ class Orchestrator:
 
     async def maybe_restore_last(self) -> None:
         last = db.get_state("last_active")
-        if last and last != "off" and last in self.config.profiles:
-            log.info("auto-restoring last active profile: %s", last)
-            await asyncio.sleep(15)  # let docker daemon finish other startup work
-            await self.switch_to(last, reason="auto-restore")
+        if not (last and last != "off" and last in self.config.profiles):
+            return
+        prof = self.config.profiles[last]
+        # Give docker daemon + any in-flight services a moment.
+        await asyncio.sleep(15)
+
+        # Adoption fast-path: if the target profile's containers are still
+        # running AND the ready_url already returns 200, just flip state to
+        # active without tearing anything down. Avoids losing torch.compile
+        # cache + cudagraph state on every qwen-control restart.
+        all_running = all(docker_ops.container_running(n) for n in prof.container_names)
+        if all_running:
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as client:
+                    r = await client.get(prof.ready_url)
+                    if r.status_code == 200:
+                        log.info("adopting already-running %s (ready_url 200)", last)
+                        async with self._lock:
+                            self.state = State(
+                                status=Status.ACTIVE,
+                                active_profile=last,
+                                started_at=time.time(),
+                                progress=SwitchProgress(
+                                    target=last,
+                                    expected_seconds=prof.expected_load_seconds,
+                                    current_step="Adopted (already running)",
+                                ),
+                            )
+                            db.log_transition("startup", f"active:{last}", "adopted-existing")
+                        return
+            except Exception as e:
+                log.info("adoption probe failed (%s); falling back to full restart", e)
+
+        log.info("auto-restoring last active profile: %s", last)
+        await self.switch_to(last, reason="auto-restore")

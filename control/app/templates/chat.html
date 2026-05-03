@@ -54,7 +54,30 @@
   .msg .role.assistant { color: var(--accent); }
   .msg .role.user { color: #93c5fd; }
 
-  .msg .think { display: block; font-size: 0.85em; color: var(--fg-mute); border-left: 2px solid var(--rule); padding-left: 10px; margin: 6px 0; font-style: italic; opacity: 0.85; }
+  .msg .think {
+    display: block;
+    font-size: 0.86em;
+    color: #c8b06b;
+    background: rgba(245, 158, 11, 0.06);
+    border-left: 3px solid var(--warn);
+    padding: 8px 12px;
+    margin: 6px 0 10px;
+    border-radius: 4px;
+    white-space: pre-wrap;
+  }
+  .msg .think-label {
+    display: inline-block;
+    font-size: 0.7em;
+    font-weight: 600;
+    color: var(--warn);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .msg .think.collapsed .think-body { display: none; }
+  .msg .think.collapsed { padding: 4px 12px; }
+  .msg .think .toggle { float: right; cursor: pointer; user-select: none; color: var(--warn); font-size: 0.78em; opacity: 0.75; }
+  .msg .think .toggle:hover { opacity: 1; }
 
   .chat-empty { text-align: center; color: var(--fg-mute); padding: 60px 20px; font-size: 0.95em; }
 
@@ -120,6 +143,15 @@
 
       <h3>Sampling</h3>
       <div class="field">
+        <label class="muted" style="font-size: 0.78em;">
+          <input type="checkbox" id="enable-thinking" checked style="vertical-align: middle;">
+          🧠 Enable thinking
+        </label>
+        <p class="muted" style="font-size: 0.7em; margin: 2px 0 0 22px;">
+          Qwen3 reasoning mode. Off = faster + shorter, no <code>&lt;think&gt;</code> phase.
+        </p>
+      </div>
+      <div class="field">
         <label class="muted" style="font-size: 0.78em;">Temperature: <span id="temp-val">0.7</span></label>
         <input type="range" id="temperature" min="0" max="2" step="0.05" value="0.7">
       </div>
@@ -178,6 +210,7 @@
   const toppEl = document.getElementById('top_p');
   const toppVal = document.getElementById('topp-val');
   const maxTokEl = document.getElementById('max-tokens');
+  const thinkEl = document.getElementById('enable-thinking');
   const statTokens = document.getElementById('stat-tokens');
   const statElapsed = document.getElementById('stat-elapsed');
   const statTps = document.getElementById('stat-tps');
@@ -251,23 +284,31 @@
 
     abortController = new AbortController();
     const t0 = performance.now();
-    let totalChars = 0;
+    let firstTokenAt = null;
+    let realCompletionTokens = null;  // populated from `usage` if vLLM sends it
 
     try {
+      const reqBody = {
+        model: MODEL_ID,
+        messages,
+        stream: true,
+        stream_options: { include_usage: true },
+        temperature: parseFloat(tempEl.value),
+        top_p: parseFloat(toppEl.value),
+        max_tokens: parseInt(maxTokEl.value, 10),
+      };
+      // Qwen3 reasoning toggle: passed through vLLM's chat-template kwargs.
+      if (!thinkEl.checked) {
+        reqBody.chat_template_kwargs = { enable_thinking: false };
+      }
+
       const resp = await fetch('/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ' + API_TOKEN,
         },
-        body: JSON.stringify({
-          model: MODEL_ID,
-          messages,
-          stream: true,
-          temperature: parseFloat(tempEl.value),
-          top_p: parseFloat(toppEl.value),
-          max_tokens: parseInt(maxTokEl.value, 10),
-        }),
+        body: JSON.stringify(reqBody),
         signal: abortController.signal,
       });
       if (!resp.ok) {
@@ -297,16 +338,29 @@
           if (payload === '[DONE]') continue;
           try {
             const obj = JSON.parse(payload);
+            // Final usage chunk (chunks where `choices` is empty/missing but `usage` is present)
+            if (obj.usage && obj.usage.completion_tokens != null) {
+              realCompletionTokens = obj.usage.completion_tokens;
+            }
             const delta = obj.choices?.[0]?.delta;
             if (!delta) continue;
-            // Qwen3 thinking mode: `reasoning` field on the delta
+            if (firstTokenAt === null) firstTokenAt = performance.now();
+            // Qwen3 thinking mode: `reasoning` field on the delta.
+            // - Thinking ON  → render reasoning as a separate "🧠 thinking" block, content as the reply.
+            // - Thinking OFF → vLLM's qwen3 parser still puts the brief reply into `reasoning` when
+            //   no <think> open/close pair is emitted. Merge both into plain content so the UI
+            //   doesn't pretend the model was reasoning when the user explicitly disabled it.
+            const thinkingEnabled = thinkEl.checked;
             if (delta.reasoning) {
-              reasoningText += delta.reasoning;
+              if (thinkingEnabled) {
+                reasoningText += delta.reasoning;
+              } else {
+                assistantText += delta.reasoning;
+              }
               renderAssistantBody(bodyEl, reasoningText, assistantText);
             }
             if (delta.content) {
               assistantText += delta.content;
-              totalChars += delta.content.length;
               renderAssistantBody(bodyEl, reasoningText, assistantText);
             }
           } catch (e) {
@@ -314,18 +368,11 @@
           }
           log.scrollTop = log.scrollHeight;
         }
-        // live stats
-        const elapsedMs = performance.now() - t0;
-        statElapsed.textContent = `elapsed: ${(elapsedMs / 1000).toFixed(1)}s`;
-        if (assistantText.length > 0) {
-          // Rough chars-per-sec → token approximation (~4 chars/token)
-          const approxTokens = Math.round(assistantText.length / 4);
-          statTokens.textContent = `tokens (est): ${approxTokens}`;
-          if (elapsedMs > 100) {
-            statTps.textContent = `~${(approxTokens * 1000 / elapsedMs).toFixed(1)} tok/s`;
-          }
-        }
+        // live stats — count reasoning chars too, since they're real tokens being generated
+        updateStats({ t0, firstTokenAt, reasoningText, assistantText, realCompletionTokens });
       }
+      // One more update after loop end so the final usage chunk wins
+      updateStats({ t0, firstTokenAt, reasoningText, assistantText, realCompletionTokens });
 
       bodyEl.parentElement.classList.remove('streaming');
       history.push({ role: 'assistant', content: assistantText });
@@ -345,18 +392,78 @@
   }
 
   function renderAssistantBody(bodyEl, reasoning, content) {
-    // Render reasoning (thinking) as a muted italic block, then content.
+    // Preserve the existing collapsed state across re-renders so the user
+    // can fold the thinking block and have it stay folded as more streams in.
+    const wasCollapsed = bodyEl.querySelector('.think.collapsed') !== null;
+
     bodyEl.innerHTML = '';
     if (reasoning) {
       const r = document.createElement('div');
-      r.className = 'think';
-      r.textContent = reasoning;
+      r.className = 'think' + (wasCollapsed ? ' collapsed' : '');
+
+      const head = document.createElement('div');
+      const lbl = document.createElement('span');
+      lbl.className = 'think-label';
+      lbl.textContent = '🧠 thinking';
+      head.appendChild(lbl);
+
+      const tog = document.createElement('span');
+      tog.className = 'toggle';
+      tog.textContent = wasCollapsed ? 'expand ▾' : 'collapse ▴';
+      tog.addEventListener('click', () => r.classList.toggle('collapsed'));
+      head.appendChild(tog);
+      r.appendChild(head);
+
+      const body = document.createElement('div');
+      body.className = 'think-body';
+      body.textContent = reasoning;
+      r.appendChild(body);
+
       bodyEl.appendChild(r);
     }
     if (content) {
       const c = document.createElement('div');
       c.textContent = content;
       bodyEl.appendChild(c);
+    }
+  }
+
+  function approxTokens(s) {
+    // Rough OpenAI-tokenizer approximation: ~4 chars/token for English.
+    // Used until the final `usage` chunk gives us the real count.
+    return Math.round(s.length / 4);
+  }
+
+  function updateStats({ t0, firstTokenAt, reasoningText, assistantText, realCompletionTokens }) {
+    const elapsedMs = performance.now() - t0;
+    statElapsed.textContent = `elapsed: ${(elapsedMs / 1000).toFixed(1)}s`;
+
+    const reasonTok = approxTokens(reasoningText);
+    const contentTok = approxTokens(assistantText);
+    const showSplit = reasoningText.length > 0;  // only show breakdown if thinking actually happened
+
+    if (realCompletionTokens != null) {
+      if (showSplit) {
+        statTokens.textContent = `tokens: ${realCompletionTokens} total (${reasonTok} thinking + ~${contentTok} reply)`;
+      } else {
+        statTokens.textContent = `tokens: ${realCompletionTokens}`;
+      }
+    } else {
+      if (showSplit) {
+        statTokens.textContent = `tokens (est): ${reasonTok + contentTok} (${reasonTok} thinking + ${contentTok} reply)`;
+      } else {
+        statTokens.textContent = `tokens (est): ${contentTok}`;
+      }
+    }
+
+    // TPS counts ALL output tokens (reasoning + content if visible as such),
+    // measured from the first delta we received (so prefill/TTFT doesn't pollute the rate).
+    const totalTokens = (realCompletionTokens != null) ? realCompletionTokens : (reasonTok + contentTok);
+    if (totalTokens > 0 && firstTokenAt && elapsedMs > 100) {
+      const decodeMs = performance.now() - firstTokenAt;
+      const tps = decodeMs > 0 ? (totalTokens * 1000 / elapsedMs) : 0;
+      const decodeTps = decodeMs > 0 ? (totalTokens * 1000 / decodeMs) : 0;
+      statTps.textContent = `${tps.toFixed(1)} tok/s end-to-end · ${decodeTps.toFixed(1)} tok/s decode`;
     }
   }
 
