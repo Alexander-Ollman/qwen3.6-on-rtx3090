@@ -205,11 +205,40 @@ If that's your setup, **skip Ollama entirely** — qwen-control's `/v1/*` is a d
 Visit `http://<host>:9000/chat` after logging in. Multi-turn streaming chat with:
 
 - System prompt textarea (pre-filled from the admin default if set, see below)
-- Temperature, top-p, max-tokens controls
+- **🧠 Reasoning effort** dropdown — Auto / Off / Light / Medium / Heavy / XHeavy. Backed by vLLM's `thinking_token_budget` sampling parameter (a *hard* cap on the `<think>` block; vLLM forces the model to emit `</think>` when the budget is hit).
+  - Off: `chat_template_kwargs: {enable_thinking: false}`
+  - Light: `thinking_token_budget: 128`
+  - Medium: `thinking_token_budget: 512`
+  - Heavy: `thinking_token_budget: 2048`
+  - XHeavy: `thinking_token_budget: 8192`
+  - Auto: no cap, model self-decides
+- Temperature, top-p, max-tokens controls. **Use server cap** button fills max-tokens with the active profile's ceiling (15K / 31K).
 - Stop button to abort a generation mid-stream
-- Live token-throughput estimate (chars/4 ÷ elapsed)
+- Live stats: TTFT (ms), elapsed, tokens (real `usage.completion_tokens` from vLLM), tok/s end-to-end + decode-only, finish_reason warning when truncated.
 
 State is browser-only — refresh = lose history. This is intentional; the playground is for testing/demos, not a daily chat client.
+
+### Controlling reasoning from external clients
+
+The `thinking_token_budget` parameter is a **vLLM SamplingParams field** (top-level in the request body), not a chat-template kwarg. To use it from any OpenAI-compatible client:
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://<host>:9000/v1", api_key="<token>")
+resp = client.chat.completions.create(
+    model="qwen36-27b",
+    messages=[{"role":"user","content":"..."}],
+    extra_body={"thinking_token_budget": 512},   # hard cap on <think> block
+    max_tokens=4096,                             # reply budget AFTER thinking
+)
+```
+
+To disable thinking entirely:
+```python
+extra_body={"chat_template_kwargs": {"enable_thinking": False}}
+```
+
+These pass-through cleanly via our proxy — qwen-control doesn't strip or rewrite request bodies.
 
 ## Default system prompt (playground-only)
 

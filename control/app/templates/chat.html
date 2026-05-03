@@ -142,25 +142,35 @@
         <p class="muted" style="font-size: 0.72em; margin: 4px 0 0;">Playground-only. Not sent on /v1/* requests from external clients.</p>
       </div>
 
-      <h3>Sampling</h3>
+      <h3>Reasoning</h3>
       <div class="field">
-        <label class="muted" style="font-size: 0.78em;">
-          <input type="checkbox" id="enable-thinking" checked style="vertical-align: middle;">
-          🧠 Enable thinking
-        </label>
-        <p class="muted" style="font-size: 0.7em; margin: 2px 0 0 22px;">
-          Qwen3 reasoning mode. Off = faster + shorter, no <code>&lt;think&gt;</code> phase.
+        <label class="muted" style="font-size: 0.78em;">🧠 Effort</label>
+        <select id="reasoning-effort" style="width: 100%; background: var(--bg-code); color: var(--fg); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px; font-family: inherit; font-size: 0.9em;">
+          <option value="auto" selected>Auto — model decides (no thinking cap)</option>
+          <option value="off">Off — disable thinking</option>
+          <option value="light">Light — 128 thinking tokens</option>
+          <option value="medium">Medium — 512 thinking tokens</option>
+          <option value="heavy">Heavy — 2 048 thinking tokens</option>
+          <option value="xheavy">XHeavy — 8 192 thinking tokens</option>
+        </select>
+        <p class="muted" style="font-size: 0.7em; margin: 4px 0 0;" id="effort-hint">
+          Hard cap on the &lt;think&gt; block via vLLM <code>thinking_token_budget</code>. Reply gets its own budget from <em>Max tokens</em> below.
         </p>
       </div>
+
+      <h3>Sampling</h3>
       <div class="field">
         <label class="muted" style="font-size: 0.78em;">Temperature: <span id="temp-val">0.7</span></label>
         <input type="range" id="temperature" min="0" max="2" step="0.05" value="0.7">
       </div>
       <div class="field">
         <label class="muted" style="font-size: 0.78em;">Max tokens (reasoning + reply)</label>
-        <input type="number" id="max-tokens" value="4096" min="1" max="32768">
-        <p class="muted" style="font-size: 0.7em; margin: 2px 0 0;">
-          With thinking on, this is the combined budget. Bump higher if responses get cut off.
+        <div style="display: flex; gap: 6px;">
+          <input type="number" id="max-tokens" value="4096" min="1" max="32768" style="flex: 1;">
+          <button type="button" id="max-cap-btn" class="btn secondary" style="padding: 4px 10px; font-size: 0.75em; white-space: nowrap;">Use server cap</button>
+        </div>
+        <p class="muted" style="font-size: 0.7em; margin: 2px 0 0;" id="cap-hint">
+          Active server cap: <span id="cap-display">…</span>
         </p>
       </div>
       <div class="field">
@@ -216,12 +226,57 @@
   const toppEl = document.getElementById('top_p');
   const toppVal = document.getElementById('topp-val');
   const maxTokEl = document.getElementById('max-tokens');
-  const thinkEl = document.getElementById('enable-thinking');
+  const effortEl = document.getElementById('reasoning-effort');
+  const effortHint = document.getElementById('effort-hint');
+  const capBtn = document.getElementById('max-cap-btn');
+  const capDisplay = document.getElementById('cap-display');
   const statTokens = document.getElementById('stat-tokens');
   const statTtft = document.getElementById('stat-ttft');
   const statElapsed = document.getElementById('stat-elapsed');
   const statTps = document.getElementById('stat-tps');
   const statFinish = document.getElementById('stat-finish');
+
+  // Server-side max-model-len per profile, minus a small prompt margin.
+  // (Hard-coded to match the launch-*.sh values; no /api/state plumbing yet.)
+  const SERVER_CAPS = {
+    'qwen36-27b':     15000,   // launch-27b.sh: --max-model-len 16000
+    'qwen36-35b-moe': 31000,   // launch-35b-moe.sh: --max-model-len 32000
+  };
+  const CAP = SERVER_CAPS[MODEL_ID] || 15000;
+  capDisplay.textContent = CAP.toLocaleString() + ' tokens';
+
+  capBtn.addEventListener('click', () => {
+    maxTokEl.value = CAP;
+  });
+
+  // Effort level → request shape. Uses vLLM's `thinking_token_budget` sampling
+  // param (top-level), which is a HARD cap on the <think> block — the parser
+  // forces the model to emit </think> when the budget is reached. Reply length
+  // remains bounded by max_tokens.
+  function effortStrategy(level, userMaxTokens) {
+    switch (level) {
+      case 'off':    return { enable_thinking: false, thinking_token_budget: null, max_tokens: userMaxTokens };
+      case 'light':  return { enable_thinking: true,  thinking_token_budget: 128,  max_tokens: userMaxTokens };
+      case 'medium': return { enable_thinking: true,  thinking_token_budget: 512,  max_tokens: userMaxTokens };
+      case 'heavy':  return { enable_thinking: true,  thinking_token_budget: 2048, max_tokens: userMaxTokens };
+      case 'xheavy': return { enable_thinking: true,  thinking_token_budget: 8192, max_tokens: userMaxTokens };
+      case 'auto':
+      default:       return { enable_thinking: true,  thinking_token_budget: null, max_tokens: userMaxTokens };
+    }
+  }
+
+  function updateEffortHint() {
+    const userMax = parseInt(maxTokEl.value, 10) || 4096;
+    const s = effortStrategy(effortEl.value, userMax);
+    let parts = [`max_tokens=${s.max_tokens.toLocaleString()}`];
+    if (s.enable_thinking === false) parts.unshift('enable_thinking=false');
+    else if (s.thinking_token_budget != null) parts.unshift(`thinking_token_budget=${s.thinking_token_budget}`);
+    else parts.unshift('thinking on, no cap');
+    effortHint.textContent = '→ ' + parts.join(', ');
+  }
+  effortEl.addEventListener('change', updateEffortHint);
+  maxTokEl.addEventListener('input', updateEffortHint);
+  updateEffortHint();
 
   // History is just an array of {role, content}. System prompt is rebuilt on each send.
   let history = [];
@@ -299,6 +354,8 @@
     let realCompletionTokens = null;  // populated from `usage` if vLLM sends it
 
     try {
+      const userMax = parseInt(maxTokEl.value, 10) || 4096;
+      const strat = effortStrategy(effortEl.value, userMax);
       const reqBody = {
         model: MODEL_ID,
         messages,
@@ -306,11 +363,13 @@
         stream_options: { include_usage: true },
         temperature: parseFloat(tempEl.value),
         top_p: parseFloat(toppEl.value),
-        max_tokens: parseInt(maxTokEl.value, 10),
+        max_tokens: strat.max_tokens,
       };
-      // Qwen3 reasoning toggle: passed through vLLM's chat-template kwargs.
-      if (!thinkEl.checked) {
+      if (strat.enable_thinking === false) {
         reqBody.chat_template_kwargs = { enable_thinking: false };
+      } else if (strat.thinking_token_budget != null) {
+        // vLLM SamplingParams field — hard cap on <think> block length.
+        reqBody.thinking_token_budget = strat.thinking_token_budget;
       }
 
       const resp = await fetch('/v1/chat/completions', {
@@ -364,7 +423,7 @@
             // - Thinking OFF → vLLM's qwen3 parser still puts the brief reply into `reasoning` when
             //   no <think> open/close pair is emitted. Merge both into plain content so the UI
             //   doesn't pretend the model was reasoning when the user explicitly disabled it.
-            const thinkingEnabled = thinkEl.checked;
+            const thinkingEnabled = effortEl.value !== 'off';
             if (delta.reasoning) {
               if (thinkingEnabled) {
                 reasoningText += delta.reasoning;
