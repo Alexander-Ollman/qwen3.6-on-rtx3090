@@ -186,6 +186,7 @@
       </div>
       <div class="chat-stats" id="chat-stats">
         <span id="stat-tokens">tokens: 0</span>
+        <span id="stat-ttft"></span>
         <span id="stat-elapsed"></span>
         <span id="stat-tps"></span>
       </div>
@@ -212,6 +213,7 @@
   const maxTokEl = document.getElementById('max-tokens');
   const thinkEl = document.getElementById('enable-thinking');
   const statTokens = document.getElementById('stat-tokens');
+  const statTtft = document.getElementById('stat-ttft');
   const statElapsed = document.getElementById('stat-elapsed');
   const statTps = document.getElementById('stat-tps');
 
@@ -249,6 +251,7 @@
     log.appendChild(empty);
     empty.style.display = 'block';
     statTokens.textContent = 'tokens: 0';
+    statTtft.textContent = '';
     statElapsed.textContent = '';
     statTps.textContent = '';
   }
@@ -437,6 +440,13 @@
   function updateStats({ t0, firstTokenAt, reasoningText, assistantText, realCompletionTokens }) {
     const elapsedMs = performance.now() - t0;
     statElapsed.textContent = `elapsed: ${(elapsedMs / 1000).toFixed(1)}s`;
+
+    if (firstTokenAt !== null) {
+      const ttftMs = firstTokenAt - t0;
+      statTtft.textContent = ttftMs < 1000
+        ? `TTFT: ${ttftMs.toFixed(0)}ms`
+        : `TTFT: ${(ttftMs / 1000).toFixed(2)}s`;
+    }
 
     const reasonTok = approxTokens(reasoningText);
     const contentTok = approxTokens(assistantText);
