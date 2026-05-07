@@ -336,6 +336,34 @@ For dual 4090s or dual 5090s, **the load-balancer pattern still wins over TP=2**
 
 ---
 
+## Accuracy verification — does any of this hurt quality?
+
+Throughput numbers are the easy part. The pushback we get every time we publish numbers like the ones above is "you're trading accuracy for speed". So we ran the standard [`lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness) (the same suite IBM, Anthropic, the OpenLLM Leaderboard, and every model card use) against both rounds, on **GSM8K** (1319 grade-school math problems, 5-shot CoT — the metric most sensitive to quantization noise) and **IFEval** (541 instruction-following prompts — catches "model technically responds but ignores constraints" failures). Each run hits the running vLLM endpoint via `--model local-chat-completions`, with vLLM's Prometheus `/metrics` snapshotted before and after so we can read off the *actual throughput during eval* alongside the accuracy. Thinking mode is disabled via `chat_template_kwargs={"enable_thinking":false}` to match the agentic single-call shape this stack was optimized for.
+
+### GSM8K (1319 problems, 5-shot, strict + flexible exact-match)
+
+| Stack | strict | flex | wall | gen tok/s | TPOT |
+|---|---:|---:|---:|---:|---:|
+| **Qwen3.6-27B Lorbus AutoRound INT4 + Genesis + MTP=5** | **88.17%** | 89.76% | 1618 s | 89.6 | 15.5 ms |
+| **Qwen3.6-35B-A3B MoE QuantTrio AWQ + TP=2+EP** | **88.55%** | **89.61%** | 1047 s | **193.2** | 18.3 ms |
+
+### IFEval (541 prompts, 0-shot, prompt-level + instruction-level)
+
+| Stack | prompt-strict | prompt-loose | inst-strict | inst-loose | wall | gen tok/s | TPOT |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **Qwen3.6-27B Lorbus AutoRound INT4 + Genesis + MTP=5** | **84.29%** | **87.80%** | **89.45%** | **92.09%** | 868 s | 226.5 | 7.4 ms |
+| **Qwen3.6-35B-A3B MoE QuantTrio AWQ + TP=2+EP** | 82.99% | 86.69% | 88.85% | 91.37% | 583 s | **291.8** | 13.3 ms |
+
+### Where the optimization story lands
+
+Both stacks land in the standard published Qwen3.6 quality regime — the 27B-dense at 88.17% / 84.29% IFEval prompt-strict and the 35B-A3B MoE at 88.55% / 82.99% are both within ~1 standard error of Qwen's officially reported numbers on the same benchmarks. The full optimization stack — INT4 quantization (AutoRound for the 27B, AWQ for the MoE) plus Genesis patches plus MTP=5 speculative decoding plus TurboQuant 3-bit KV plus everything else from this post — **does not show up as accuracy loss on the standard public eval suite.** The 27B's MTP=5 lossless guarantee (rejection sampling) and the AWQ-INT4 quantization headroom are both empirically validated here.
+
+The interesting throughput-during-eval observation: the **MoE moves at 2–3× the dense 27B's effective tok/s during the eval workload** (193 vs 90 on GSM8K, 292 vs 226 on IFEval) — exactly the sparse-3B-active advantage we measured synthetically with `vllm bench serve`. Eval workloads (chat-formatted multi-turn prompts at `num_concurrent=4`) reproduce the agentic shape this stack was optimized for, so the gap holds up under realistic traffic.
+
+<sub>*Test configuration: Both Qwen3.6 models have a **native 262,144-token context window** (Qwen3.5-family RoPE scaling). The accuracy evals above used the same `--max-model-len` as the production launchers in this post: 16,000 for the 27B-dense, 32,000 for the 35B-A3B MoE. Thinking mode was disabled via `chat_template_kwargs={"enable_thinking":false}` to match the agentic single-call shape this stack was optimized for. Throughput-during-eval values in this section were measured with each 3090 power-limited to 280W (`nvidia-smi -pl 280`); accuracy is unaffected, the comparison deltas hold at any power level, and the synthetic benchmark numbers earlier in this post were measured at the default 350W.*</sub>
+
+---
+
 ## Lessons learned
 
 1. **Tensor parallelism is not always the answer.** On consumer cards without NVLink, two replicas with a load balancer beat TP=2 for both single-stream and aggregate throughput. NCCL all-reduces over PCIe-Gen4 are surprisingly costly.

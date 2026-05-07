@@ -26,6 +26,8 @@ services:
       # Optional: override the listen port. Default 9000.
       QWEN_CONTROL_PORT: "${QWEN_CONTROL_PORT:-9000}"
       # If "1", auto-restore last-active model on container startup.
-      QWEN_AUTO_RESTORE: "${QWEN_AUTO_RESTORE:-1}"
+      # NB: pinned to 0 while doing dual-GPU work outside the qwen-control profiles —
+      # the auto-restore would race a fresh-boot GPU init against whatever we're testing.
+      QWEN_AUTO_RESTORE: "${QWEN_AUTO_RESTORE:-0}"
       # Set to "0" to bypass tailnet IP check (e.g. for local-only testing).
       QWEN_REQUIRE_TAILNET: "${QWEN_REQUIRE_TAILNET:-1}"

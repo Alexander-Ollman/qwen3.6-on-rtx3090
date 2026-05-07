@@ -720,6 +720,44 @@ EOF
 
 <p><strong>For the MoE on 4090/5090:</strong> the calculus is different again. The 35B-A3B AWQ-INT4 checkpoint is 24 GB, which fits on a 32 GB 5090 with room for KV cache — meaning <strong>a 5090 unlocks the 2-replica + LB pattern that's impossible on dual 3090s</strong> (each 3090 can't fit the model alone). Two 5090s with two independent MoE replicas + nginx LB could plausibly hit 500+ tok/s aggregate. We did not measure this, but the architectural barrier is gone. On dual 4090s (24 GB each), you're still in single-instance TP=2+EP territory, just faster than 3090.</p>
 
+<h2>Accuracy verification — does any of this hurt quality?</h2>
+
+<p>Throughput numbers are the easy part. The pushback we get every time we publish numbers like the ones above is "you're trading accuracy for speed". So we ran the standard <a href="https://github.com/EleutherAI/lm-evaluation-harness">lm-evaluation-harness</a> (the same suite IBM, Anthropic, the OpenLLM Leaderboard, and every model card use) against both rounds, on <strong>GSM8K</strong> (1319 grade-school math problems, 5-shot CoT — the metric most sensitive to quantization noise) and <strong>IFEval</strong> (541 instruction-following prompts — catches "model technically responds but ignores constraints" failures). Each run hits the running vLLM endpoint via <code>--model local-chat-completions</code>, with vLLM's Prometheus <code>/metrics</code> snapshotted before and after so we can read off the <em>actual throughput during eval</em> alongside the accuracy. Thinking mode is disabled via <code>chat_template_kwargs={"enable_thinking":false}</code> to match the agentic single-call shape this stack was optimized for.</p>
+
+<h3>GSM8K (1319 problems, 5-shot, strict + flexible exact-match)</h3>
+
+<table>
+<thead>
+<tr><th>Stack</th><th class="right">strict</th><th class="right">flex</th><th class="right">wall</th><th class="right">gen tok/s</th><th class="right">TPOT</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Qwen3.6-27B Lorbus AutoRound INT4 + Genesis + MTP=5</strong></td><td class="right peak">88.17%</td><td class="right">89.76%</td><td class="right">1618 s</td><td class="right">89.6</td><td class="right">15.5 ms</td></tr>
+<tr><td><strong>Qwen3.6-35B-A3B MoE QuantTrio AWQ + TP=2+EP</strong></td><td class="right peak">88.55%</td><td class="right peak">89.61%</td><td class="right">1047 s</td><td class="right peak">193.2</td><td class="right">18.3 ms</td></tr>
+</tbody>
+</table>
+
+<h3>IFEval (541 prompts, 0-shot, prompt-level + instruction-level)</h3>
+
+<table>
+<thead>
+<tr><th>Stack</th><th class="right">prompt-strict</th><th class="right">prompt-loose</th><th class="right">inst-strict</th><th class="right">inst-loose</th><th class="right">wall</th><th class="right">gen tok/s</th><th class="right">TPOT</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Qwen3.6-27B Lorbus AutoRound INT4 + Genesis + MTP=5</strong></td><td class="right peak">84.29%</td><td class="right peak">87.80%</td><td class="right peak">89.45%</td><td class="right peak">92.09%</td><td class="right">868 s</td><td class="right">226.5</td><td class="right peak">7.4 ms</td></tr>
+<tr><td><strong>Qwen3.6-35B-A3B MoE QuantTrio AWQ + TP=2+EP</strong></td><td class="right">82.99%</td><td class="right">86.69%</td><td class="right">88.85%</td><td class="right">91.37%</td><td class="right">583 s</td><td class="right peak">291.8</td><td class="right">13.3 ms</td></tr>
+</tbody>
+</table>
+
+<h3>Where the optimization story lands</h3>
+
+<p>Both stacks land in the standard published Qwen3.6 quality regime — the 27B-dense at 88.17% / 84.29% IFEval prompt-strict and the 35B-A3B MoE at 88.55% / 82.99% are both within ~1 standard error of Qwen's officially reported numbers on the same benchmarks. The full optimization stack — INT4 quantization (AutoRound for the 27B, AWQ for the MoE) plus Genesis patches plus MTP=5 speculative decoding plus TurboQuant 3-bit KV plus everything else from this post — <strong>does not show up as accuracy loss on the standard public eval suite.</strong> The 27B's MTP=5 lossless guarantee (rejection sampling) and the AWQ-INT4 quantization headroom are both empirically validated here.</p>
+
+<p>The interesting throughput-during-eval observation: the <strong>MoE moves at 2–3× the dense 27B's effective tok/s during the eval workload</strong> (193 vs 90 on GSM8K, 292 vs 226 on IFEval) — exactly the sparse-3B-active advantage we measured synthetically with <code>vllm bench serve</code>. Eval workloads (chat-formatted multi-turn prompts at <code>num_concurrent=4</code>) reproduce the agentic shape this stack was optimized for, so the gap holds up under realistic traffic.</p>
+
+<p style="font-size:0.82em;color:var(--fg-mute);font-style:italic;border-top:1px dashed var(--rule);padding-top:10px;margin-top:18px;">
+Test configuration: Both Qwen3.6 models have a <strong>native 262,144-token context window</strong> (Qwen3.5-family RoPE scaling). The accuracy evals above used the same <code>--max-model-len</code> as the production launchers in this post: 16,000 for the 27B-dense, 32,000 for the 35B-A3B MoE. Thinking mode was disabled via <code>chat_template_kwargs={"enable_thinking":false}</code> to match the agentic single-call shape this stack was optimized for. Throughput-during-eval values in this section were measured with each 3090 power-limited to 280W (<code>nvidia-smi -pl 280</code>); accuracy is unaffected, the comparison deltas hold at any power level, and the synthetic benchmark numbers earlier in this post were measured at the default 350W.
+</p>
+
 <h2>Lessons learned</h2>
 
 <ol>

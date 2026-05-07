@@ -32,6 +32,50 @@ profiles:
       Single instance TP=2 + expert-parallel. No spec-decode (regresses on this MoE).
       Peak: 99 tok/s single-stream, 283 tok/s aggregate at C=4.
 
+  granite-8b:
+    display_name: "Granite-4.1-8B (AWQ-INT4)"
+    served_model_id: granite-8b
+    upstream: "http://localhost:8400"
+    launcher: /host/repo/launch-granite-8b.sh
+    container_names:
+      - granite-8b-1
+      - granite-8b-2
+      - granite-lb-8b
+    ready_url: "http://localhost:8400/v1/models"
+    expected_load_seconds: 45
+    description: |
+      Two replicas behind nginx least_conn LB. cyankiwi/granite-4.1-8b-AWQ-INT4 (5.4 GB).
+      Peak: 105 tok/s single-stream, 1222 tok/s aggregate at C=64 (2624 peak burst).
+      The agentic-fanout workhorse — best at C=2..8 single-call latency.
+
+  granite-30b:
+    display_name: "Granite-4.1-30B (AWQ-INT4 TP=2)"
+    served_model_id: granite-30b
+    upstream: "http://localhost:8500"
+    launcher: /host/repo/launch-granite-30b.sh
+    container_names:
+      - granite-30b
+    ready_url: "http://localhost:8500/v1/models"
+    expected_load_seconds: 75
+    description: |
+      Single instance TP=2 across both 3090s. drawais/Granite-4.1-30B-AWQ-INT4
+      (sym INT4 g=128). Peak: 44 tok/s single-stream, 216 tok/s aggregate at C=8.
+      Use for highest-quality generations; the 8B is faster for everything else.
+
+  granite-3b-eagle3:
+    display_name: "Granite-4.1-3B + EAGLE-3 (trained)"
+    served_model_id: granite-3b-eagle
+    upstream: "http://localhost:8500"
+    launcher: /host/repo/launch-granite-3b-eagle3.sh
+    container_names:
+      - granite-3b-eagle
+    ready_url: "http://localhost:8500/v1/models"
+    expected_load_seconds: 45
+    description: |
+      Single 3090, granite-4.1-3b BF16 with our 5000-step trained EAGLE-3 head as
+      speculative draft (n=5). 105 tok/s C=1, +13.5% over baseline. The latency-
+      sensitive endpoint — pair with granite-8b for batch traffic on the other GPU.
+
 # Containers we don't want grabbing GPUs anymore. install.sh sets these to
 # restart=no and stops them once. Listed here for reference / re-run.
 gpu_competitors:

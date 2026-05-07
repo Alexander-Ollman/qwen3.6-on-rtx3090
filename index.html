@@ -2,16 +2,89 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="refresh" content="0; url=qwen3.6-on-rtx3090.html">
-<title>From 25 to 283 tok/s: Serving Qwen3.6 on Dual RTX 3090s</title>
-<link rel="canonical" href="qwen3.6-on-rtx3090.html">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dual RTX 3090 LLM serving notes</title>
 <style>
-  body { background: #0d0f13; color: #e7e9ec; font-family: system-ui, sans-serif; margin: 0; padding: 64px 32px; text-align: center; }
-  a { color: #4ea1ff; }
+  :root {
+    --bg: #0d0f13;
+    --bg-elev: #14171c;
+    --fg: #e7e9ec;
+    --fg-dim: #9aa0a8;
+    --fg-mute: #6b7180;
+    --accent: #4ea1ff;
+    --good: #4ade80;
+    --rule: #1f242c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    line-height: 1.65;
+    font-size: 16px;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 64px 32px 96px; }
+  h1 { font-size: 1.8em; margin: 0 0 0.3em; letter-spacing: -0.01em; }
+  h2 { font-size: 1.2em; margin: 2.4em 0 0.8em; color: var(--fg-dim); font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.85em; }
+  p.lede { color: var(--fg-dim); font-size: 1.05em; margin-top: 0.4em; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .post {
+    display: block;
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 22px 26px;
+    margin: 14px 0;
+    color: inherit;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+  .post:hover { border-color: var(--accent); text-decoration: none; transform: translateY(-1px); }
+  .post .title { font-size: 1.15em; font-weight: 600; color: var(--fg); margin-bottom: 4px; }
+  .post .lede { color: var(--fg-dim); font-size: 0.95em; margin: 4px 0 0; }
+  .post .pill {
+    display: inline-block;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.78em;
+    color: var(--good);
+    background: rgba(74, 222, 128, 0.08);
+    border: 1px solid rgba(74, 222, 128, 0.3);
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-right: 6px;
+  }
+  .footer {
+    margin-top: 3em; padding-top: 1em;
+    border-top: 1px solid var(--rule);
+    color: var(--fg-mute); font-size: 0.86em;
+  }
 </style>
 </head>
 <body>
-<p>Redirecting to the <a href="qwen3.6-on-rtx3090.html">blog post</a>…</p>
-<script>location.replace("qwen3.6-on-rtx3090.html");</script>
+<main>
+
+<h1>LLM serving on dual RTX 3090s</h1>
+<p class="lede">A pair of full-stack writeups on serving frontier open-weight models on a 2× RTX 3090 (48 GB total) box. Same hardware for both posts, different model families, several inverted findings.</p>
+
+<h2>Posts</h2>
+
+<a class="post" href="qwen3.6-on-rtx3090.html">
+  <div><span class="pill">2026-05-01</span><span class="pill">Qwen 3.6</span></div>
+  <div class="title">From 25 to 283 tok/s — Serving Qwen3.6 on Dual RTX 3090s</div>
+  <p class="lede">Two rounds: the 27B dense (9× over baseline, 225 tok/s aggregate via 2 replicas + LB + MTP <em>n</em>=5 + Genesis patches), then the 35B-A3B MoE (peak 283 tok/s aggregate via TP=2 + expert-parallel — same per-stream ceiling, totally different mechanism).</p>
+</a>
+
+<a class="post" href="https://alexander-ollman.github.io/granite4.1-on-rtx3090/">
+  <div><span class="pill">2026-05-05</span><span class="pill">Granite 4.1</span><span class="pill">EAGLE-3</span></div>
+  <div class="title">From 93 to 1222 tok/s — Serving IBM Granite 4.1 on Dual RTX 3090s</div>
+  <p class="lede">Three rounds: the 8B dense (1222 tok/s aggregate at C=64, 2624 peak), the 30B with a quantization-format gotcha that breaks one INT4 variant entirely, and a from-scratch EAGLE-3 head trained in 30 minutes for +13.5% single-stream throughput. Several findings invert the Qwen post's conclusions.</p>
+</a>
+
+<div class="footer">
+Source &amp; reproducible recipes for both posts in the same repository. The 8B-AWQ recipe in the Granite post lands at 307 tok/s aggregate at C=4 — beating both Qwen stacks on identical hardware.
+</div>
+
+</main>
 </body>
 </html>
