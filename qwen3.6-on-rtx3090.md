@@ -364,6 +364,29 @@ The interesting throughput-during-eval observation: the **MoE moves at 2–3× t
 
 ---
 
+## Throughput across the context window
+
+The throughput numbers earlier in this post were all at 1024-token prompts — the agentic single-call shape this stack was optimized for. The obvious follow-up: how does single-stream throughput hold up as you push the context window past 1K, past 16K, past 64K, all the way toward the model's 262,144-token native ceiling?
+
+We swept input lengths 512 → as-far-as-we-could-fit on the same dual-3090 host, one stream at a time (`C=1`), exactly 128 output tokens per request (`min_tokens=max_tokens=128, ignore_eos=true` so the decode-TPS measurement is stable across configs). Each request hits `/v1/completions` directly (raw prompt, no chat template, no reasoning parser involvement) so the streaming TTFT we measure is genuinely the engine's first decoded token, not the parser releasing buffered output. Two metrics per point:
+
+- **Decode-only TPS** (`completion_tokens / (total_time − ttft)`) — isolates how the steady-state decode loop slows under KV-cache pressure. This is the number that matters once you're past prefill.
+- **End-to-end TPS** (`completion_tokens / total_time`) — includes prefill. Reflects user-perceived throughput. Falls off a cliff at long context because prefill scales ~linearly with input length.
+
+![Throughput vs input context — Qwen3.6 stack on dual RTX 3090](context-chart.svg)
+
+Three observations:
+
+1. **The 35B-A3B MoE's decode TPS is remarkably flat** — 104 tok/s at 457 input → 102 tok/s at 28,735 input. **63× context expansion, 3% decode penalty.** The TP=2 shard splits the KV cache across both cards, the FP8 KV halves bandwidth, and the sparse-3B-active forward pass keeps SM occupancy unconstrained even with a fat KV. This is the most context-resilient decode curve in the bench.
+2. **The 27B dense + MTP n=3 is also gentle out to 60K** — 93 → 76 tok/s, an 18% drop. MTP gives back some of what KV pressure takes away. Past 60K the line steps down and continues to ~22 tok/s at 237,957 input (≈ 91% of native 262K) on a re-launched TP=2 single-replica config without spec decode (vLLM 0.19's spec-decode + TP=2 + this AWQ-INT4 checkpoint hits a kernel mismatch we couldn't work around).
+3. **End-to-end TPS collapses well before decode does.** At 14K input the 27B's e2e is already 8.7 tok/s (decode 71); at 60K it's 2 tok/s. Prefill at 60K takes 60+ seconds — the first token is *the* user-visible cost at long context, and there's no decode optimization that recovers that.
+
+We don't have a Qwen 35B-A3B line past 28K because two attempts to push the 35B to longer context (extended Phase B at 131K, native-attempt Phase C at 262K) wedged the host. The combination of 35B-A3B + TP=2 + EP + heavy NCCL prefill at ≥32K input + the GPUs at the post-reboot default 350W transient envelope produced PSU brownouts both times. The 280W cap survives the workload but doesn't survive a reboot, and we burned the overnight window to two of these. The 35B stops at its as-configured `--max-model-len 32000` here.
+
+<sub>*Bench configuration: dual RTX 3090 (Ampere SM 8.6, 48 GB total), 280W power limit, vLLM 0.19.2 nightly, `/v1/completions` raw, `temperature=0`, `min_tokens=max_tokens=128`, `ignore_eos=true`, per-request nonce defeats prefix caching. Each x value is the exact `prompt_tokens` reported by vLLM (after tokenization). The 27B line uses three different launcher configs depending on context bucket: ≤14K is the production 2-replica + LB stack with MTP n=3 (Phase A); 14K–60K is single-replica TP=1 with MTP n=3 (Phase B-MTP); past 60K is TP=2 single-replica without spec decode (Phase C). The kink at ~60K reflects spec decode dropping out, not a model-level effect.*</sub>
+
+---
+
 ## Lessons learned
 
 1. **Tensor parallelism is not always the answer.** On consumer cards without NVLink, two replicas with a load balancer beat TP=2 for both single-stream and aggregate throughput. NCCL all-reduces over PCIe-Gen4 are surprisingly costly.
